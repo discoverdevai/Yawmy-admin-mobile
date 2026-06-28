@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Nursery Admin",
+    "slug": "nursery-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "nurseryadmin",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nurseryadmin.app"
+    },
+    "android": {
+      "package": "com.nurseryadmin.app",
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload your nursery logo."
+        }
+      ],
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsDownloadToken": "REPLACE_WITH_MAPBOX_DOWNLOAD_TOKEN"
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "5b1378b5-f5e3-4fcc-81c9-a14f49cfc447"
+      }
+    },
+    "newArchEnabled": true
+  }
+}
