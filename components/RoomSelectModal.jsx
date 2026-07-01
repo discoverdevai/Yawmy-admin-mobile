@@ -8,7 +8,14 @@ import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
  * Bottom-sheet to pick a single room to share an announcement with
  * (Figma 803-27233). Confirm reports the chosen room id.
  */
-export default function RoomSelectModal({ visible, rooms = [], initialRoomId = null, onClose, onConfirm }) {
+export default function RoomSelectModal({
+  visible,
+  rooms = [],
+  initialRoomId = null,
+  onClose,
+  onConfirm,
+  subtitle = 'Choose a room to share announcement .',
+}) {
   const [selected, setSelected] = useState(initialRoomId);
 
   useEffect(() => {
@@ -25,7 +32,7 @@ export default function RoomSelectModal({ visible, rooms = [], initialRoomId = n
             <View style={styles.content}>
               <View style={styles.head}>
                 <Text style={styles.title}>Specific Room</Text>
-                <Text style={styles.subtitle}>Choose a room to share announcement .</Text>
+                <Text style={styles.subtitle}>{subtitle}</Text>
               </View>
 
               <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>

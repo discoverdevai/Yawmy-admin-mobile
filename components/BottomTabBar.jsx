@@ -51,7 +51,7 @@ export default function BottomTabBar({ active }) {
       />
 
       <View style={styles.spotlightWrap}>
-        <Pressable style={styles.spotlightRing}>
+        <Pressable style={styles.spotlightRing} onPress={() => go('/chat')}>
           <View style={styles.spotlight}>
             <Messages width={24} height={24} />
           </View>

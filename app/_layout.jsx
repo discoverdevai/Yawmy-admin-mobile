@@ -11,6 +11,7 @@ import { RoomsProvider } from '../context/RoomsContext';
 import { EnrollmentProvider } from '../context/EnrollmentContext';
 import { AnnouncementsProvider } from '../context/AnnouncementsContext';
 import { EventsProvider } from '../context/EventsContext';
+import { ChatProvider } from '../context/ChatContext';
 import { paperTheme } from '../constants/theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -41,7 +42,9 @@ export default function RootLayout() {
                   <EnrollmentProvider>
                     <AnnouncementsProvider>
                       <EventsProvider>
-                        <Stack screenOptions={{ headerShown: false }} />
+                        <ChatProvider>
+                          <Stack screenOptions={{ headerShown: false }} />
+                        </ChatProvider>
                       </EventsProvider>
                     </AnnouncementsProvider>
                   </EnrollmentProvider>

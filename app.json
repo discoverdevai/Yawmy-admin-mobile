@@ -26,7 +26,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload your nursery logo."
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to share images and videos in chat.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to take and send photos in chat."
         }
       ],
       [
@@ -34,7 +35,8 @@
         {
           "RNMapboxMapsDownloadToken": "REPLACE_WITH_MAPBOX_DOWNLOAD_TOKEN"
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "router": {},
