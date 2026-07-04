@@ -133,7 +133,11 @@ export default function SetPassword() {
         </View>
       </Animated.View>
 
-      <SuccessModal visible={showSuccess} onContinue={handleContinueToApp} />
+      <SuccessModal
+        visible={showSuccess}
+        onContinue={handleContinueToApp}
+        message="You can now access your nursery's Admin portal."
+      />
     </SafeAreaView>
   );
 }

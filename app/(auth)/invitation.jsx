@@ -1,13 +1,16 @@
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ImagePlaceholder from '../../assets/icons/image-placeholder.svg';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
-import { NURSERY_NAME } from '../../constants/invitation';
+import { NURSERY_NAME, INVITATION_VALID } from '../../constants/invitation';
 
 export default function InvitationValidation() {
   const router = useRouter();
+
+  // Expired / revoked invitations land on the error screen instead.
+  if (!INVITATION_VALID) return <Redirect href="/invitation-expired" />;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

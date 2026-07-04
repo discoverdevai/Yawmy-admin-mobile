@@ -13,3 +13,11 @@
 export const INVITED_EMAIL = 'shehabgamal123@gmail.com';
 
 export const NURSERY_NAME = '[Nursery Name]';
+
+// Whether the invitation link is still valid. In production this is derived
+// from the signed token's expiry returned by the backend when the deep link
+// opens the app. Flip to `false` to preview the "Invitation Expired" screen.
+export const INVITATION_VALID = true;
+
+// Where the "Contact Admin" action on the expired screen writes to.
+export const SUPPORT_EMAIL = 'support@yawmycare.com';
