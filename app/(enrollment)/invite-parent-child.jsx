@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -17,6 +17,7 @@ import EditIcon from '../../assets/icons/edit-dark.svg';
 import Trash from '../../assets/icons/trash.svg';
 import AddContactModal from '../../components/AddContactModal';
 import DatePickerModal from '../../components/DatePickerModal';
+import ErrorModal from '../../components/ErrorModal';
 import { useEnrollment } from '../../context/EnrollmentContext';
 import { useRooms } from '../../context/RoomsContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
@@ -41,6 +42,7 @@ export default function InviteParentChild() {
   const [roomOpenFor, setRoomOpenFor] = useState(null); // child index whose room dd is open
   const [dateFor, setDateFor] = useState(null); // child index whose date picker is open
   const [contactCtx, setContactCtx] = useState(null); // { kind, index } | null
+  const [notice, setNotice] = useState(null);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -53,7 +55,7 @@ export default function InviteParentChild() {
   const pickImage = async (i) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo access to upload an image.');
+      setNotice({ title: 'Permission needed', message: 'Please allow photo access to upload an image.' });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -243,29 +245,37 @@ export default function InviteParentChild() {
                 </Pressable>
               </View>
 
-              {/* Saved contacts (guardians + pickups) with edit/delete */}
-              {['guardians', 'pickups'].map((kind) =>
-                kid[kind].map((c, ci) => (
-                  <View key={`${kind}-${ci}`} style={styles.contactCard}>
-                    <View style={styles.contactLeft}>
-                      <Text style={styles.contactLabel} numberOfLines={1}>
-                        {c.label}
-                      </Text>
-                      <View style={styles.contactPhoneRow}>
-                        <CallIcon width={16} height={16} />
-                        <Text style={styles.contactPhone}>{c.phone}</Text>
+              {/* Saved contacts, grouped by section like the Edit Child screen */}
+              {[
+                { kind: 'guardians', title: 'Guardians' },
+                { kind: 'pickups', title: 'Pickup Contacts' },
+              ].map(({ kind, title }) =>
+                kid[kind].length > 0 ? (
+                  <View key={kind} style={styles.contactGroup}>
+                    <Text style={styles.contactGroupTitle}>{title}</Text>
+                    {kid[kind].map((c, ci) => (
+                      <View key={`${kind}-${ci}`} style={styles.contactCard}>
+                        <View style={styles.contactLeft}>
+                          <Text style={styles.contactLabel} numberOfLines={1}>
+                            {c.label}
+                          </Text>
+                          <View style={styles.contactPhoneRow}>
+                            <CallIcon width={16} height={16} />
+                            <Text style={styles.contactPhone}>{c.phone}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.contactActions}>
+                          <Pressable onPress={() => editContact(kind, i, ci)} hitSlop={6}>
+                            <EditIcon width={24} height={24} />
+                          </Pressable>
+                          <Pressable onPress={() => deleteContact(kind, i, ci)} hitSlop={6}>
+                            <Trash width={24} height={24} />
+                          </Pressable>
+                        </View>
                       </View>
-                    </View>
-                    <View style={styles.contactActions}>
-                      <Pressable onPress={() => editContact(kind, i, ci)} hitSlop={6}>
-                        <EditIcon width={24} height={24} />
-                      </Pressable>
-                      <Pressable onPress={() => deleteContact(kind, i, ci)} hitSlop={6}>
-                        <Trash width={24} height={24} />
-                      </Pressable>
-                    </View>
+                    ))}
                   </View>
-                ))
+                ) : null
               )}
             </View>
           );
@@ -315,6 +325,14 @@ export default function InviteParentChild() {
         value={dateFor !== null ? kids[dateFor]?.dob : ''}
         onClose={() => setDateFor(null)}
         onSelect={(d) => dateFor !== null && patchKid(dateFor, { dob: d })}
+      />
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
       />
     </SafeAreaView>
   );
@@ -419,6 +437,8 @@ const styles = StyleSheet.create({
   },
   outlineText: { fontFamily: Fonts.bold, fontWeight: '700', fontSize: 12, color: Colors.primaryText },
 
+  contactGroup: { gap: Spacing.sm },
+  contactGroupTitle: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.gray },
   contactCard: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -36,7 +36,8 @@
           "RNMapboxMapsDownloadToken": "REPLACE_WITH_MAPBOX_DOWNLOAD_TOKEN"
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-asset"
     ],
     "extra": {
       "router": {},

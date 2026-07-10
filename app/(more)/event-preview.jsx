@@ -31,7 +31,7 @@ export default function EventPreview() {
   // Auto-dismiss the success popup and return to the events list.
   useEffect(() => {
     if (!showSuccess) return;
-    const t = setTimeout(() => router.replace('/events'), 2000);
+    const t = setTimeout(() => router.dismissTo('/events'), 2000);
     return () => clearTimeout(t);
   }, [showSuccess, router]);
 

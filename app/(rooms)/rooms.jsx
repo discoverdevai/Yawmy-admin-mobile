@@ -55,17 +55,22 @@ export default function Rooms() {
 
   const handleArchive = (room) => {
     closeMenu();
-    // A room with children must be emptied first — guard before archiving.
-    if (room.childIds.length > 0) setReassignTarget(room);
-    else setArchiveTarget(room);
+    // Always confirm the archive first.
+    setArchiveTarget(room);
   };
 
   const confirmArchive = () => {
-    if (archiveTarget) {
-      archiveRoom(archiveTarget.id);
+    const room = archiveTarget;
+    setArchiveTarget(null);
+    if (!room) return;
+    // A room with children must be emptied first — show the reassign guard;
+    // otherwise archive it straight away.
+    if (room.childIds.length > 0) {
+      setReassignTarget(room);
+    } else {
+      archiveRoom(room.id);
       setNoticeKind('archived');
     }
-    setArchiveTarget(null);
   };
 
   const handleUnarchive = (room) => {
@@ -80,15 +85,8 @@ export default function Rooms() {
     if (room) router.push({ pathname: '/reassign-children', params: { roomId: String(room.id) } });
   };
 
-  // Cancel on the reassign guard archives the room as-is (with its children).
-  const cancelReassign = () => {
-    const room = reassignTarget;
-    setReassignTarget(null);
-    if (room) {
-      archiveRoom(room.id);
-      setNoticeKind('archived');
-    }
-  };
+  // Cancel on the reassign guard just returns to Rooms — the room is NOT archived.
+  const cancelReassign = () => setReassignTarget(null);
 
   const assignToRoom = (room) => {
     closeMenu();

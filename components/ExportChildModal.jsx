@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Modal, View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+import { downloadCsv } from '../utils/exportCsv';
 import Check from '../assets/icons/check.svg';
 import ChevronDown from '../assets/icons/chevron-down.svg';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
@@ -20,7 +19,7 @@ const buildCsv = (rows) => {
  * Export Child Records bottom-sheet (Figma 598-116969): pick all / specific
  * children, optionally filter by rooms, then export a CSV file.
  */
-export default function ExportChildModal({ visible, allChildren = [], roomNames = [], onClose }) {
+export default function ExportChildModal({ visible, allChildren = [], roomNames = [], onClose, onDownloaded }) {
   const [selectedRooms, setSelectedRooms] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [listOpen, setListOpen] = useState(false);
@@ -64,28 +63,13 @@ export default function ExportChildModal({ visible, allChildren = [], roomNames 
           ? `${exportRows.length} selected`
           : 'Select children';
 
-  // Write a CSV from local data and open the share/download sheet.
+  // Write a CSV from local data and download it onto the phone.
   const exportCsv = async () => {
-    if (exportRows.length === 0) {
-      Alert.alert('No selection', 'Please select at least one child to export.');
-      return;
-    }
-    try {
-      const csv = buildCsv(exportRows);
-      const uri = FileSystem.cacheDirectory + 'child-records.csv';
-      await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, {
-          mimeType: 'text/csv',
-          dialogTitle: 'Export Child Records',
-          UTI: 'public.comma-separated-values-text',
-        });
-      } else {
-        Alert.alert('Saved', `Child records exported to:\n${uri}`);
-      }
+    if (exportRows.length === 0) return;
+    const ok = await downloadCsv('child-records.csv', buildCsv(exportRows));
+    if (ok) {
       onClose?.();
-    } catch (e) {
-      Alert.alert('Export failed', String(e?.message || e));
+      onDownloaded?.();
     }
   };
 
@@ -154,7 +138,11 @@ export default function ExportChildModal({ visible, allChildren = [], roomNames 
                 </View>
               </ScrollView>
 
-              <Pressable style={({ pressed }) => [styles.cta, pressed && styles.pressed]} onPress={exportCsv}>
+              <Pressable
+                style={[styles.cta, exportRows.length === 0 && styles.ctaDisabled]}
+                onPress={exportCsv}
+                disabled={exportRows.length === 0}
+              >
                 <Text style={styles.ctaText}>Export As CSV</Text>
               </Pressable>
             </View>
@@ -261,6 +249,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  ctaDisabled: { backgroundColor: Colors.disabledButton },
   pressed: { opacity: 0.85 },
   ctaText: { fontFamily: Fonts.bold, fontWeight: '700', fontSize: 16, color: Colors.background },
 });

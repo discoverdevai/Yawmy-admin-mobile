@@ -167,6 +167,9 @@ export default function InviteParentReview() {
         onClose={() => {
           setShowSuccess(false);
           resetParentDraft();
+          // Clear the whole wizard (step 1/2/3) from the stack so the phone's
+          // back button doesn't walk back through the invite steps.
+          if (router.canDismiss()) router.dismissAll();
           router.replace({ pathname: '/enrollment', params: { tab: 'parents' } });
         }}
       />

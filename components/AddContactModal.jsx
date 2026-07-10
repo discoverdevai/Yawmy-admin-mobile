@@ -205,7 +205,7 @@ export default function AddContactModal({
                       style={styles.input}
                       value={number}
                       onChangeText={setNumber}
-                      placeholder="100 123 4567"
+                      placeholder="Enter phone number"
                       placeholderTextColor={Colors.gray}
                       keyboardType="phone-pad"
                     />

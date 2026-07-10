@@ -9,13 +9,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated,
-  Alert,
   Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -40,8 +39,14 @@ import Reply from '../../assets/icons/reply.svg';
 import Close from '../../assets/icons/close.svg';
 import Camera from '../../assets/icons/camera.svg';
 import Photos from '../../assets/icons/photos.svg';
+import VolumeSlash from '../../assets/icons/volume-slash.svg';
+import VolumeOn from '../../assets/icons/volume-on.svg';
 import EmojiPickerModal from '../../components/EmojiPickerModal';
+import DeleteChildModal from '../../components/DeleteChildModal';
+import MuteUserModal from '../../components/MuteUserModal';
+import ErrorModal from '../../components/ErrorModal';
 import { buildChats, initialsOf } from '../../constants/chats';
+import { dayLabel, midnight, sameDay } from '../../utils/date';
 import { useRooms } from '../../context/RoomsContext';
 import { useEnrollment } from '../../context/EnrollmentContext';
 import { useChat } from '../../context/ChatContext';
@@ -203,7 +208,17 @@ export default function Conversation() {
   const { id } = useLocalSearchParams();
   const { rooms, enrolledTeachers } = useRooms();
   const { parents, staff } = useEnrollment();
-  const { getThread, sendMessage, sendVoice, sendMedia, getReaction, setReaction } = useChat();
+  const {
+    getThread,
+    sendMessage,
+    sendVoice,
+    sendMedia,
+    deleteMessage,
+    getReaction,
+    setReaction,
+    isMuted,
+    setMuted,
+  } = useChat();
 
   const chats = buildChats({ rooms, parents, staff, teachers: enrolledTeachers });
   const chat = chats.find((c) => c.id === id) || chats[0];
@@ -212,11 +227,15 @@ export default function Conversation() {
   const [replyTo, setReplyTo] = useState(null); // { name, text }
   const [showAttach, setShowAttach] = useState(false);
   const scrollRef = useRef(null);
+  const insets = useSafeAreaInsets();
 
-  // Long-press reactions.
+  // Long-press reactions + message options (mute / delete).
   const [anchor, setAnchor] = useState(null); // { msgId, top }
   const [quickEmojis, setQuickEmojis] = useState(['👍', '👌', '👏', '❤️', '😂']);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // msgId
+  const [muteTarget, setMuteTarget] = useState(null); // { sender }
+  const [notice, setNotice] = useState(null); // { title, message }
 
   // MessageRow measures its own bubble and passes the reaction-bar top here.
   const openReactions = (msgId, top) => setAnchor({ msgId, top });
@@ -235,7 +254,7 @@ export default function Conversation() {
     setShowAttach(false);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+      setNotice({ title: 'Permission needed', message: 'Camera access is required to take a photo.' });
       return;
     }
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
@@ -250,7 +269,7 @@ export default function Conversation() {
     setShowAttach(false);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission needed', 'Photo library access is required to attach media.');
+      setNotice({ title: 'Permission needed', message: 'Photo library access is required to attach media.' });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.7 });
@@ -283,6 +302,43 @@ export default function Conversation() {
   const dotAnim = useRef(new Animated.Value(1)).current;
 
   const messages = getThread(chat.id);
+
+  // Sender of the currently-anchored message (for the mute action).
+  const anchoredSender = () => {
+    const m = messages.find((x) => x.id === anchor?.msgId);
+    return m ? (m.mine ? 'You' : chat.name) : chat.name;
+  };
+  const anchoredMuted = anchor ? isMuted(chat.id, anchoredSender()) : false;
+
+  // Options card actions (mute / delete).
+  const onMuteOption = () => {
+    const sender = anchoredSender();
+    setAnchor(null);
+    setMuteTarget({ sender });
+  };
+  const onDeleteOption = () => {
+    const msgId = anchor?.msgId;
+    setAnchor(null);
+    setDeleteTarget(msgId);
+  };
+  const confirmDelete = () => {
+    if (deleteTarget) deleteMessage(chat.id, deleteTarget);
+    setDeleteTarget(null);
+  };
+  const confirmMute = () => {
+    if (muteTarget) setMuted(chat.id, muteTarget.sender, !isMuted(chat.id, muteTarget.sender));
+    setMuteTarget(null);
+  };
+
+  // Group messages under day separators (Today / Yesterday / date).
+  const dayGroups = [];
+  messages.forEach((m) => {
+    const day = midnight(m.date || new Date());
+    const last = dayGroups[dayGroups.length - 1];
+    if (last && sameDay(last.day, day)) last.items.push(m);
+    else dayGroups.push({ day, items: [m] });
+  });
+
   const isGroup = chat.type === 'group';
   const status = isGroup ? `${chat.memberCount} members` : 'Online';
 
@@ -330,7 +386,7 @@ export default function Conversation() {
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Permission needed', 'Microphone access is required to record voice messages.');
+        setNotice({ title: 'Permission needed', message: 'Microphone access is required to record voice messages.' });
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
@@ -340,7 +396,7 @@ export default function Conversation() {
       setRecording(true);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (e) {
-      Alert.alert('Recording failed', String(e?.message || e));
+      setNotice({ title: 'Recording failed', message: String(e?.message || e) });
     }
   };
 
@@ -405,8 +461,8 @@ export default function Conversation() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
       >
         {/* Messages */}
         <ScrollView
@@ -415,25 +471,28 @@ export default function Conversation() {
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
         >
-          <View style={styles.dayPill}>
-            <Text style={styles.dayText}>Today</Text>
-          </View>
-
-          {messages.map((m) => (
-            <MessageRow
-              key={m.id}
-              m={m}
-              isGroup={isGroup}
-              chatName={chat.name}
-              reaction={getReaction(chat.id, m.id)}
-              onReply={onReply}
-              onReact={openReactions}
-            />
+          {dayGroups.map((group) => (
+            <View key={group.day.toISOString()} style={styles.dayGroup}>
+              <View style={styles.dayPill}>
+                <Text style={styles.dayText}>{dayLabel(group.day)}</Text>
+              </View>
+              {group.items.map((m) => (
+                <MessageRow
+                  key={m.id}
+                  m={m}
+                  isGroup={isGroup}
+                  chatName={chat.name}
+                  reaction={getReaction(chat.id, m.id)}
+                  onReply={onReply}
+                  onReact={openReactions}
+                />
+              ))}
+            </View>
           ))}
         </ScrollView>
 
         {/* Input bar */}
-        <View style={styles.inputBar}>
+        <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
           {recording ? (
             <>
               <Pressable style={styles.cancelBtn} onPress={cancelRecording} hitSlop={6}>
@@ -525,6 +584,18 @@ export default function Conversation() {
                   <Text style={styles.reactPlusText}>+</Text>
                 </Pressable>
               </View>
+
+              {/* Options: mute / unmute user + delete message */}
+              <View style={styles.optionsCard}>
+                <Pressable style={styles.optionItem} onPress={onMuteOption}>
+                  {anchoredMuted ? <VolumeOn width={24} height={24} /> : <VolumeSlash width={24} height={24} />}
+                  <Text style={styles.optionText}>{anchoredMuted ? 'Unmute User' : 'Mute User'}</Text>
+                </Pressable>
+                <Pressable style={styles.optionItem} onPress={onDeleteOption}>
+                  <Trash width={24} height={24} />
+                  <Text style={[styles.optionText, styles.optionDanger]}>Delete Message</Text>
+                </Pressable>
+              </View>
             </View>
           )}
         </Pressable>
@@ -534,6 +605,29 @@ export default function Conversation() {
         visible={showEmojiPicker}
         onClose={() => setShowEmojiPicker(false)}
         onSelect={pickEmoji}
+      />
+
+      <DeleteChildModal
+        visible={!!deleteTarget}
+        title="Delete Message?"
+        message="Are you sure you want to delete this message? This action cannot be undone."
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
+
+      <MuteUserModal
+        visible={!!muteTarget}
+        muted={muteTarget ? isMuted(chat.id, muteTarget.sender) : false}
+        onCancel={() => setMuteTarget(null)}
+        onConfirm={confirmMute}
+      />
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
       />
     </SafeAreaView>
   );
@@ -567,6 +661,7 @@ const styles = StyleSheet.create({
   onlineText: { color: '#408406' },
 
   messages: { padding: Spacing.md, gap: Spacing.sm + 4, paddingBottom: Spacing.lg },
+  dayGroup: { gap: Spacing.sm + 4 },
   dayPill: {
     alignSelf: 'center',
     backgroundColor: '#F2F2F2',
@@ -754,6 +849,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   reactPlusText: { fontSize: 20, color: Colors.gray, marginTop: -2 },
+
+  optionsCard: {
+    marginTop: Spacing.sm,
+    width: 200,
+    backgroundColor: Colors.background,
+    borderRadius: Radii.button,
+    borderWidth: 1,
+    borderColor: Colors.secStroke,
+    padding: Spacing.sm + 4,
+    shadowColor: '#2D2D2D',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
+  optionItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, height: 40 },
+  optionText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.textBlack },
+  optionDanger: { color: Colors.redText },
 
   // Applied reaction chip on a bubble
   reactionChip: {

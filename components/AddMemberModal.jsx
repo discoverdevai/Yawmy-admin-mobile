@@ -8,7 +8,6 @@ import {
   ScrollView,
   StyleSheet,
   Animated,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Upload from '../assets/icons/upload.svg';
 import ChevronDown from '../assets/icons/chevron-down.svg';
 import Check from '../assets/icons/check.svg';
+import ErrorModal from './ErrorModal';
 import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
@@ -42,6 +42,7 @@ export default function AddMemberModal({
   namePlaceholder = 'Enter teacher name',
   emailPlaceholder = 'Enter teacher email',
   roles = DEFAULT_ROLES,
+  initialName = '',
   onClose,
   onAdd,
 }) {
@@ -51,6 +52,7 @@ export default function AddMemberModal({
   const [role, setRole] = useState('');
   const [roleOpen, setRoleOpen] = useState(false);
   const [errors, setErrors] = useState({}); // { name, email, role }
+  const [notice, setNotice] = useState(null);
 
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
@@ -72,10 +74,15 @@ export default function AddMemberModal({
     setErrors({});
   };
 
+  // Prefill the name when opened (used by the "Enroll Teacher" flow).
+  useEffect(() => {
+    if (visible) setName(initialName || '');
+  }, [visible, initialName]);
+
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo access to upload an image.');
+      setNotice({ title: 'Permission needed', message: 'Please allow photo access to upload an image.' });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -257,6 +264,14 @@ export default function AddMemberModal({
           </SafeAreaView>
         </Animated.View>
       </View>
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
+      />
     </Modal>
   );
 }

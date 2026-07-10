@@ -8,7 +8,6 @@ import {
   ScrollView,
   StyleSheet,
   Animated,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Upload from '../assets/icons/upload.svg';
 import ChevronDown from '../assets/icons/chevron-down.svg';
 import Check from '../assets/icons/check.svg';
+import ErrorModal from './ErrorModal';
 import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { useRooms } from '../context/RoomsContext';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
@@ -26,6 +26,7 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
   const [name, setName] = useState('');
   const [teachers, setTeachers] = useState([]);
   const [teacherOpen, setTeacherOpen] = useState(false);
+  const [notice, setNotice] = useState(null);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
 
@@ -49,7 +50,7 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo access to upload a room image.');
+      setNotice({ title: 'Permission needed', message: 'Please allow photo access to upload a room image.' });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -189,6 +190,14 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
           </SafeAreaView>
         </Animated.View>
       </View>
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
+      />
     </Modal>
   );
 }

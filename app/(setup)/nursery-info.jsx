@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   Animated,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import Upload from '../../assets/icons/upload.svg';
+import ErrorModal from '../../components/ErrorModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import { useSetup } from '../../context/SetupContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
@@ -23,6 +23,7 @@ export default function NurseryInfo() {
   const router = useRouter();
   const [logo, setLogo] = useState(null);
   const [name, setName] = useState('');
+  const [notice, setNotice] = useState(null);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
   const setup = useSetup();
@@ -41,10 +42,10 @@ export default function NurseryInfo() {
   const pickLogo = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
-        'Permission needed',
-        'Please allow photo access so you can upload your nursery logo.'
-      );
+      setNotice({
+        title: 'Permission needed',
+        message: 'Please allow photo access so you can upload your nursery logo.',
+      });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -151,6 +152,14 @@ export default function NurseryInfo() {
           </Pressable>
         </View>
       </Animated.View>
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Modal, View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+import { downloadCsv } from '../utils/exportCsv';
 import Check from '../assets/icons/check.svg';
 import ChevronDown from '../assets/icons/chevron-down.svg';
 import Calendar from '../assets/icons/calendar.svg';
@@ -32,7 +31,7 @@ const buildCsv = (rows) => {
  * Export Attendance Logs bottom-sheet (Figma 598-117029): filter by child(ren),
  * a date range, rooms and status, then export a CSV.
  */
-export default function ExportAttendanceModal({ visible, allChildren = [], roomNames = [], onClose }) {
+export default function ExportAttendanceModal({ visible, allChildren = [], roomNames = [], onClose, onDownloaded }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [childOpen, setChildOpen] = useState(false);
   const [range, setRange] = useState(null); // { from, to } as "DD MMM YYYY"
@@ -105,24 +104,12 @@ export default function ExportAttendanceModal({ visible, allChildren = [], roomN
   const exportCsv = async () => {
     const rows = buildRows();
     if (rows.length === 0) {
-      Alert.alert('No data', 'No attendance records match the selected filters.');
       return;
     }
-    try {
-      const uri = FileSystem.cacheDirectory + 'attendance-logs.csv';
-      await FileSystem.writeAsStringAsync(uri, buildCsv(rows), { encoding: FileSystem.EncodingType.UTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, {
-          mimeType: 'text/csv',
-          dialogTitle: 'Export Attendance Logs',
-          UTI: 'public.comma-separated-values-text',
-        });
-      } else {
-        Alert.alert('Saved', `Attendance logs exported to:\n${uri}`);
-      }
+    const ok = await downloadCsv('attendance-logs.csv', buildCsv(rows));
+    if (ok) {
       onClose?.();
-    } catch (e) {
-      Alert.alert('Export failed', String(e?.message || e));
+      onDownloaded?.();
     }
   };
 

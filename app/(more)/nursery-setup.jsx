@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -13,6 +13,7 @@ import ChevronDown from '../../assets/icons/chevron-down.svg';
 import GeofenceRadiusModal from '../../components/GeofenceRadiusModal';
 import DaysModal from '../../components/DaysModal';
 import HoursModal from '../../components/HoursModal';
+import ErrorModal from '../../components/ErrorModal';
 import { useSetup } from '../../context/SetupContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
@@ -32,6 +33,7 @@ export default function NurserySetup() {
   const [showRadius, setShowRadius] = useState(false);
   const [showDays, setShowDays] = useState(false);
   const [showHours, setShowHours] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -42,7 +44,7 @@ export default function NurserySetup() {
   const pickLogo = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo access to choose a nursery icon.');
+      setNotice({ title: 'Permission needed', message: 'Please allow photo access to choose a nursery icon.' });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -191,6 +193,14 @@ export default function NurserySetup() {
           setHours(h);
           setShowHours(false);
         }}
+      />
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
       />
     </SafeAreaView>
   );

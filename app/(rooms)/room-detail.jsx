@@ -18,6 +18,7 @@ import DeleteChildModal from '../../components/DeleteChildModal';
 import ReassignChildModal from '../../components/ReassignChildModal';
 import ReassignTeacherModal from '../../components/ReassignTeacherModal';
 import { useRooms } from '../../context/RoomsContext';
+import { useEnrollment } from '../../context/EnrollmentContext';
 import { CHILDREN, ROOM_CAPACITY, teacherId } from '../../constants/people';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
@@ -41,13 +42,16 @@ export default function RoomDetail() {
     enrolledChildren,
     deleteChild,
   } = useRooms();
+  const { resetParentDraft, updateParentDraft } = useEnrollment();
   const [tab, setTab] = useState('children');
   const [query, setQuery] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [pendingChildName, setPendingChildName] = useState('');
   const [conflict, setConflict] = useState(null); // { child, room }
   const [showAddTeacher, setShowAddTeacher] = useState(false);
   const [teacherNotFound, setTeacherNotFound] = useState(false);
+  const [pendingTeacherName, setPendingTeacherName] = useState('');
   const [menu, setMenu] = useState({ visible: false, top: 0, childId: null });
   const [deleteChildId, setDeleteChildId] = useState(null);
   const [reassignChildId, setReassignChildId] = useState(null);
@@ -87,6 +91,7 @@ export default function RoomDetail() {
     const match = enrolledTeachers.find((t) => normalize(t) === normalize(name));
     setShowAddTeacher(false);
     if (!match) {
+      setPendingTeacherName(name.trim());
       setTeacherNotFound(true);
       return;
     }
@@ -102,6 +107,7 @@ export default function RoomDetail() {
     const match = enrolledChildren.find((c) => normalize(c.name) === normalize(name));
     setShowAdd(false);
     if (!match) {
+      setPendingChildName(name.trim());
       setNotFound(true);
       return;
     }
@@ -112,6 +118,34 @@ export default function RoomDetail() {
       return;
     }
     toggleChild(rid, match.id);
+  };
+
+  // "Enroll Teacher" → open the Enrollment Staff tab's Add Member sheet,
+  // prefilled with the typed name, to invite the new teacher.
+  const enrollTeacher = () => {
+    setTeacherNotFound(false);
+    router.push({ pathname: '/enrollment', params: { tab: 'staff', addName: pendingTeacherName } });
+  };
+
+  // "Enroll Child" → start the Invite Parent wizard prefilled with the typed
+  // child name and this room, so the child is enrolled under the new parent.
+  const enrollChild = () => {
+    setNotFound(false);
+    resetParentDraft();
+    updateParentDraft({
+      children: [
+        {
+          image: null,
+          name: pendingChildName,
+          dob: '',
+          roomId: rid,
+          roomName: room.name,
+          guardians: [],
+          pickups: [],
+        },
+      ],
+    });
+    router.push('/invite-parent');
   };
 
   const confirmMove = () => {
@@ -294,7 +328,7 @@ export default function RoomDetail() {
       <ChildNotFoundModal
         visible={notFound}
         onCancel={() => setNotFound(false)}
-        onEnroll={() => setNotFound(false)}
+        onEnroll={enrollChild}
       />
 
       <AddChildModal
@@ -313,7 +347,7 @@ export default function RoomDetail() {
         message="This teacher is not registered in the system. Please enroll them first before assigning them."
         enrollText="Enroll Teacher"
         onCancel={() => setTeacherNotFound(false)}
-        onEnroll={() => setTeacherNotFound(false)}
+        onEnroll={enrollTeacher}
       />
 
       <AlreadyAssignedModal

@@ -48,7 +48,7 @@ export default function AnnouncementPreview() {
   // Auto-dismiss the success popup and return to the announcements list.
   useEffect(() => {
     if (!showSuccess) return;
-    const t = setTimeout(() => router.replace('/announcements'), 2000);
+    const t = setTimeout(() => router.dismissTo('/announcements'), 2000);
     return () => clearTimeout(t);
   }, [showSuccess, router]);
 

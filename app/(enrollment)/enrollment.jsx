@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Modal } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -70,7 +70,7 @@ function StatusBadge({ status }) {
 
 export default function Enrollment() {
   const router = useRouter();
-  const { tab: tabParam } = useLocalSearchParams();
+  const { tab: tabParam, addName } = useLocalSearchParams();
   const { listFor, addMember, removeMember } = useEnrollment();
   const { enrolledChildren, rooms, toggleChild, deleteChild } = useRooms();
   const [tab, setTab] = useState(
@@ -79,6 +79,17 @@ export default function Enrollment() {
   const [query, setQuery] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [prefillName, setPrefillName] = useState('');
+
+  // Coming from "Enroll Teacher": open the Add Member sheet prefilled, once.
+  useEffect(() => {
+    if (addName) {
+      setTab('staff');
+      setPrefillName(String(addName));
+      setShowAdd(true);
+      router.setParams({ addName: '' });
+    }
+  }, [addName, router]);
   const [showInviteSent, setShowInviteSent] = useState(false);
   // Active filters per tab so switching tabs keeps each tab's own selection.
   const [filters, setFilters] = useState({}); // { [tab]: { statuses, roles } }
@@ -364,10 +375,15 @@ export default function Enrollment() {
             ? 'Enter child email'
             : 'Enter teacher email'
         }
-        onClose={() => setShowAdd(false)}
+        initialName={prefillName}
+        onClose={() => {
+          setShowAdd(false);
+          setPrefillName('');
+        }}
         onAdd={(member) => {
           addMember(tab, member);
           setShowAdd(false);
+          setPrefillName('');
           setShowInviteSent(true);
         }}
       />

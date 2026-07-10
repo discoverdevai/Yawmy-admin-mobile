@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import Export from '../../assets/icons/more-export.svg';
 import ExportChildModal from '../../components/ExportChildModal';
 import ExportAttendanceModal from '../../components/ExportAttendanceModal';
 import ExportIncidentModal from '../../components/ExportIncidentModal';
+import SuccessModal from '../../components/SuccessModal';
 import { useRooms } from '../../context/RoomsContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
@@ -26,6 +27,14 @@ export default function DataExport() {
   const [showChild, setShowChild] = useState(false);
   const [showAttendance, setShowAttendance] = useState(false);
   const [showIncident, setShowIncident] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+
+  // Auto-dismiss the themed download confirmation.
+  useEffect(() => {
+    if (!showSuccess) return;
+    const t = setTimeout(() => setShowSuccess(false), 2200);
+    return () => clearTimeout(t);
+  }, [showSuccess]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -77,6 +86,7 @@ export default function DataExport() {
         allChildren={allChildren}
         roomNames={roomNames}
         onClose={() => setShowChild(false)}
+        onDownloaded={() => setShowSuccess(true)}
       />
 
       <ExportAttendanceModal
@@ -84,6 +94,7 @@ export default function DataExport() {
         allChildren={allChildren}
         roomNames={roomNames}
         onClose={() => setShowAttendance(false)}
+        onDownloaded={() => setShowSuccess(true)}
       />
 
       <ExportIncidentModal
@@ -91,6 +102,14 @@ export default function DataExport() {
         allChildren={allChildren}
         roomNames={roomNames}
         onClose={() => setShowIncident(false)}
+        onDownloaded={() => setShowSuccess(true)}
+      />
+
+      <SuccessModal
+        visible={showSuccess}
+        title="Export Successful!"
+        message="Your file has been saved to your device."
+        buttonText=""
       />
     </SafeAreaView>
   );
