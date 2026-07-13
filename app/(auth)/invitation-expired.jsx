@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RequestLinkModal from '../../components/RequestLinkModal';
 import SuccessModal from '../../components/SuccessModal';
+import { requestReactivation } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const expiredImage = require('../../assets/images/invitation-expired.png');
@@ -22,8 +23,15 @@ export default function InvitationExpired() {
     return () => clearTimeout(t);
   }, [showSuccess, router]);
 
-  const submitRequest = () => {
+  const submitRequest = async (email, message) => {
     setShowRequest(false);
+    try {
+      // Notifies the super-admin(s) to re-issue an invite. 204 = accepted.
+      await requestReactivation(email, message);
+    } catch (_) {
+      // Non-blocking: we still confirm to the user (the endpoint never leaks
+      // whether the email exists), matching the design's optimistic success.
+    }
     setShowSuccess(true);
   };
 

@@ -9,12 +9,14 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import PasswordInput from '../../components/PasswordInput';
 import SuccessModal from '../../components/SuccessModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
+import { useAuth } from '../../context/AuthContext';
+import { acceptInvite } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const hero = require('../../assets/images/secure-password.png');
@@ -23,9 +25,13 @@ const MIN_LENGTH = 8;
 
 export default function SetPassword() {
   const router = useRouter();
+  const { token } = useLocalSearchParams();
+  const { activateSession } = useAuth();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
 
@@ -40,20 +46,33 @@ export default function SetPassword() {
 
   // Live validation
   const showMismatch = confirm.length > 0 && password !== confirm;
-  const canSubmit = password.length >= MIN_LENGTH && password === confirm;
+  const canSubmit =
+    password.length >= MIN_LENGTH && password === confirm && !submitting;
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/invitation');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) return;
-
-    // TODO: replace with the real backend call that completes the invite by
-    // setting the password for the invited account (INVITED_EMAIL is the
-    // account identity). On success → show the activation modal.
-    setShowSuccess(true);
+    if (!token) {
+      setError('Missing invitation token. Please reopen the invite link.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      // Complete the invite: set password + activate the account.
+      const res = await acceptInvite(token, password);
+      // Log the new admin in so the nursery-setup steps are authenticated.
+      await activateSession(res.accessToken);
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not set your password. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleContinueToApp = () => {
@@ -109,6 +128,7 @@ export default function SetPassword() {
               {showMismatch && (
                 <Text style={styles.error}>Passwords do not match.</Text>
               )}
+              {error ? <Text style={styles.error}>{error}</Text> : null}
             </View>
           </ScrollView>
 

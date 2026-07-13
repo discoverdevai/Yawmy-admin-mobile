@@ -1,12 +1,14 @@
 // ============================================================
 // API Configuration
-// Change BASE_URL to point at your backend server.
-// Android emulator  → http://10.0.2.2:8080/api
-// iOS simulator     → http://localhost:8080/api
-// Physical device   → http://<YOUR_LAN_IP>:8080/api
+// BASE_URL points at the deployed backend on Render.
+//
+// For local backend development, swap it for one of:
+//   Android emulator  → http://10.0.2.2:8080/api
+//   iOS simulator     → http://localhost:8080/api
+//   Physical device   → http://<YOUR_LAN_IP>:8080/api
 // ============================================================
 
-export const BASE_URL = 'http://10.0.2.2:8080/api';
+export const BASE_URL = 'https://nursery-be.onrender.com/api';
 
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 

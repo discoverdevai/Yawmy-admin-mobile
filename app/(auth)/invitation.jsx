@@ -1,16 +1,58 @@
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ImagePlaceholder from '../../assets/icons/image-placeholder.svg';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
-import { NURSERY_NAME, INVITATION_VALID } from '../../constants/invitation';
+import { validateInvite } from '../../services/authService';
 
 export default function InvitationValidation() {
   const router = useRouter();
+  // token arrives from the deep link: nurseryadmin://invitation?token=...
+  const { token } = useLocalSearchParams();
+  const [checking, setChecking] = useState(true);
+  const [invite, setInvite] = useState(null);
 
-  // Expired / revoked invitations land on the error screen instead.
-  if (!INVITATION_VALID) return <Redirect href="/invitation-expired" />;
+  useEffect(() => {
+    let active = true;
+
+    // No token → the app wasn't opened from a valid invite link.
+    if (!token) {
+      router.replace('/invitation-expired');
+      return;
+    }
+
+    (async () => {
+      try {
+        const res = await validateInvite(token);
+        if (!active) return;
+        if (res && res.status === 'VALID') {
+          setInvite(res);
+          setChecking(false);
+        } else {
+          // EXPIRED / USED / INVALID all land on the expired screen.
+          router.replace('/invitation-expired');
+        }
+      } catch (_) {
+        if (active) router.replace('/invitation-expired');
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [token, router]);
+
+  if (checking) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centerAll]} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Checking your invitation…</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -23,7 +65,7 @@ export default function InvitationValidation() {
         </View>
 
         <View style={styles.textBlock}>
-          <Text style={styles.title}>Welcome to {NURSERY_NAME}</Text>
+          <Text style={styles.title}>Welcome{invite?.fullName ? `, ${invite.fullName}` : ''}</Text>
           <Text style={styles.subtitle}>
             You’re in. Your access is ready—start managing your nursery with
             ease.
@@ -31,11 +73,16 @@ export default function InvitationValidation() {
         </View>
       </View>
 
-      {/* Continue */}
+      {/* Continue → carry the token (and email) into the set-password step */}
       <View style={styles.footer}>
         <Pressable
           style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-          onPress={() => router.push('/set-password')}
+          onPress={() =>
+            router.push({
+              pathname: '/set-password',
+              params: { token, email: invite?.email ?? '' },
+            })
+          }
         >
           <Text style={styles.buttonText}>Continue</Text>
         </Pressable>
@@ -48,6 +95,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  centerAll: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.md,
+  },
+  loadingText: {
+    fontFamily: Fonts.medium,
+    fontWeight: '500',
+    fontSize: 16,
+    color: Colors.gray,
   },
   content: {
     flex: 1,

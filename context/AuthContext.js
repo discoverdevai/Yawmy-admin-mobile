@@ -63,6 +63,20 @@ export function AuthProvider({ children }) {
     return response;
   }, []);
 
+  // Establish a session from an access token obtained outside the normal login
+  // (e.g. after accepting an invite). Persists the token and loads the profile.
+  const activateSession = useCallback(async (accessToken) => {
+    tokenRef.current = accessToken; // set immediately so getProfile() carries it
+    setToken(accessToken);
+    await AsyncStorage.setItem(TOKEN_KEY, accessToken);
+
+    const me = await authService.getProfile();
+    setUser(me);
+    setIsAuthenticated(true);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(me));
+    return me;
+  }, []);
+
   const signOut = useCallback(async () => {
     tokenRef.current = null; // clear immediately so API doesn't send stale token
     setUser(null);
@@ -80,6 +94,7 @@ export function AuthProvider({ children }) {
         isLoading,
         signIn,
         signOut,
+        activateSession,
       }}
     >
       {children}
