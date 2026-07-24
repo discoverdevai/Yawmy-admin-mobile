@@ -13,6 +13,7 @@ export default function DeleteChildModal({
   onConfirm,
   title = 'Delete Child?',
   message = 'Are you sure you want to delete this child account? This action cannot be undone.',
+  image = removeUser,
 }) {
   return (
     <Modal
@@ -25,7 +26,7 @@ export default function DeleteChildModal({
       <View style={styles.overlay}>
         <View style={styles.card}>
           <View style={styles.inner}>
-            <Image source={removeUser} style={styles.image} contentFit="contain" />
+            <Image source={image} style={styles.image} contentFit="contain" />
             <View style={styles.textBlock}>
               <Text style={styles.title}>{title}</Text>
               <Text style={styles.message}>{message}</Text>

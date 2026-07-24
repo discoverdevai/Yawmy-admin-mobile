@@ -1,6 +1,13 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Image } from 'expo-image';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  Linking,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,30 +16,108 @@ import AnnounceDoc from '../../assets/icons/announce-doc.svg';
 import FileDoc from '../../assets/icons/file-doc.svg';
 import LinkIcon from '../../assets/icons/link.svg';
 import EyeSeen from '../../assets/icons/eye-seen.svg';
+import AuthImage from '../../components/AuthImage';
 import DeleteChildModal from '../../components/DeleteChildModal';
-import { useAnnouncements } from '../../context/AnnouncementsContext';
+import SuccessModal from '../../components/SuccessModal';
+import ErrorModal from '../../components/ErrorModal';
+import { getAnnouncement, deleteAnnouncement } from '../../services/announcementService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
+
+const deleteIllustration = require('../../assets/images/delete-announcement.png');
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "2024-03-30" -> "Mar 30"
+const fmtDate = (s) => {
+  if (!s) return '';
+  const [, m, d] = s.split('-').map(Number);
+  return m ? `${MONTHS[m - 1]} ${d}` : '';
+};
+// "22:30:00" -> "10:30 PM"
+const fmtTime = (s) => {
+  if (!s) return '';
+  const [hh, mm] = s.split(':').map(Number);
+  if (Number.isNaN(hh)) return '';
+  const period = hh < 12 ? 'AM' : 'PM';
+  return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${period}`;
+};
+
+// A short filename-ish label for a document attachment (backend has no original name).
+const DOC_EXT = {
+  'application/pdf': 'PDF',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+  'application/vnd.ms-excel': 'XLS',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+  'application/msword': 'DOC',
+};
+const docLabel = (att) => `Attachment.${(DOC_EXT[att.contentType] || 'FILE').toLowerCase()}`;
 
 export default function AnnouncementDetails() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const { announcements, deleteAnnouncement } = useAnnouncements();
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const item = announcements.find((a) => a.id === id) || announcements[0];
-  const { title, body, date, views, scope, images = [], file, link } = item;
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getAnnouncement(id);
+      setItem(data);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the announcement.');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/announcements');
   };
 
-  // Confirm deletion: remove the announcement and return to the list.
-  const confirmDelete = () => {
-    setShowDelete(false);
-    deleteAnnouncement(item.id);
-    router.replace('/announcements');
+  // Confirm deletion: remove the announcement via the API, then show the success modal.
+  const confirmDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteAnnouncement(id);
+      setShowDelete(false);
+      setShowSuccess(true);
+    } catch (e) {
+      setShowDelete(false);
+      setError(e.message || 'Could not delete the announcement.');
+    } finally {
+      setDeleting(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      </SafeAreaView>
+    );
+  }
+
+  const target = item?.scope === 'NURSERY' ? 'Nursery-Wide' : (item?.roomName || 'Room-targeted');
+  const when = [fmtDate(item?.announcementDate), fmtTime(item?.announcementTime)]
+    .filter(Boolean)
+    .join(' - ');
+  const attachments = item?.attachments || [];
+  const visuals = attachments.filter((a) => a.type === 'PHOTO' || a.type === 'VIDEO');
+  const docs = attachments.filter((a) => a.type === 'DOCUMENT');
+  const links = item?.links || [];
+  const hasAttachments = visuals.length > 0 || docs.length > 0 || links.length > 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -46,88 +131,128 @@ export default function AnnouncementDetails() {
         <Text style={styles.headerTitle}>Announcements Details</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Meta card */}
-        <View style={styles.metaCard}>
-          <View style={styles.metaIcon}>
-            <AnnounceDoc width={24} height={24} />
+      {item && (
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Meta card */}
+          <View style={styles.metaCard}>
+            <View style={styles.metaIcon}>
+              <AnnounceDoc width={24} height={24} />
+            </View>
+            <View style={styles.metaText}>
+              <Text style={styles.metaShare}>{target}</Text>
+              {!!when && <Text style={styles.metaDate}>{when}</Text>}
+            </View>
+            <View style={styles.viewsBadge}>
+              <EyeSeen width={16} height={16} />
+              <Text style={styles.viewsText}>{item.seenCount ?? 0}</Text>
+            </View>
           </View>
-          <View style={styles.metaText}>
-            <Text style={styles.metaShare}>{scope === 'nursery' ? 'Nursery-Wide' : 'Room-targeted'}</Text>
-            <Text style={styles.metaDate}>{date}</Text>
+
+          {/* Title + description */}
+          <View style={styles.body}>
+            <Text style={styles.title}>{item.title}</Text>
+            <Text style={styles.description}>{item.body}</Text>
           </View>
-          <View style={styles.viewsBadge}>
-            <EyeSeen width={16} height={16} />
-            <Text style={styles.viewsText}>{views}</Text>
-          </View>
-        </View>
 
-        {/* Title + description */}
-        <View style={styles.body}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.description}>{body}</Text>
-        </View>
+          {/* Attachments */}
+          {hasAttachments && (
+            <View style={styles.attachments}>
+              <Text style={styles.attachLabel}>Attachments</Text>
 
-        {/* Attachments */}
-        {(images.length > 0 || file || link) && (
-          <View style={styles.attachments}>
-            <Text style={styles.attachLabel}>Attachments</Text>
+              {visuals.length > 0 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.visualRow}
+                >
+                  {visuals.map((att) =>
+                    att.type === 'PHOTO' ? (
+                      <AuthImage key={att.id} path={att.fileUrl} style={styles.visual} contentFit="cover" />
+                    ) : (
+                      <View key={att.id} style={[styles.visual, styles.videoTile]}>
+                        <View style={styles.playCircle}>
+                          <Text style={styles.playIcon}>{'▶'}</Text>
+                        </View>
+                      </View>
+                    )
+                  )}
+                </ScrollView>
+              )}
 
-            {images.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.visualRow}
-              >
-                {images.map((src, i) => (
-                  <Image key={i} source={src} style={styles.visual} contentFit="cover" />
-                ))}
-              </ScrollView>
-            )}
+              {docs.map((att) => (
+                <View key={att.id} style={styles.docRow}>
+                  <FileDoc width={24} height={24} />
+                  <Text style={styles.docName} numberOfLines={1}>
+                    {docLabel(att)}
+                  </Text>
+                </View>
+              ))}
 
-            {!!file && (
-              <View style={styles.docRow}>
-                <FileDoc width={24} height={24} />
-                <Text style={styles.docName} numberOfLines={1}>
-                  {file}
-                </Text>
-              </View>
-            )}
-
-            {!!link && (
-              <View style={styles.linkRow}>
-                <LinkIcon width={24} height={24} />
-                <Text style={styles.linkText} numberOfLines={1}>
-                  {link}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-      </ScrollView>
+              {links.map((url, i) => (
+                <Pressable
+                  key={`${url}-${i}`}
+                  style={styles.linkRow}
+                  onPress={() => Linking.openURL(/^https?:\/\//i.test(url) ? url : `https://${url}`)}
+                >
+                  <LinkIcon width={24} height={24} />
+                  <Text style={styles.linkText} numberOfLines={1}>
+                    {url}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* Footer */}
-      <View style={styles.footer}>
-        <Pressable
-          style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}
-          onPress={() => setShowDelete(true)}
-        >
-          <Text style={styles.deleteText}>Delete</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
-          onPress={() => router.push({ pathname: '/add-announcement', params: { id: item.id } })}
-        >
-          <Text style={styles.editText}>Edit</Text>
-        </Pressable>
-      </View>
+      {item && (
+        <View style={styles.footer}>
+          <Pressable
+            style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}
+            onPress={() => setShowDelete(true)}
+          >
+            <Text style={styles.deleteText}>Delete</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
+            onPress={() => router.push({ pathname: '/add-announcement', params: { id } })}
+          >
+            <Text style={styles.editText}>Edit</Text>
+          </Pressable>
+        </View>
+      )}
 
       <DeleteChildModal
         visible={showDelete}
+        image={deleteIllustration}
         title="Delete This Announcement?"
         message="Are you sure you want to delete this announcement? This action cannot be undone."
         onCancel={() => setShowDelete(false)}
         onConfirm={confirmDelete}
+      />
+
+      <SuccessModal
+        visible={showSuccess}
+        title="Announcement Deleted Successfully!"
+        message="The announcement has been removed and is no longer visible."
+        buttonText="Back to Announcements"
+        onContinue={() => {
+          setShowSuccess(false);
+          router.replace('/announcements');
+        }}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => {
+          const wasLoadError = !item;
+          setError(null);
+          if (wasLoadError) goBack();
+        }}
       />
     </SafeAreaView>
   );
@@ -185,7 +310,17 @@ const styles = StyleSheet.create({
   attachments: { paddingHorizontal: Spacing.md, gap: Spacing.md, marginTop: Spacing.xs },
   attachLabel: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 16, color: Colors.textBlack },
   visualRow: { gap: Spacing.sm },
-  visual: { width: 159, height: 112, borderRadius: Radii.button },
+  visual: { width: 159, height: 112, borderRadius: Radii.button, backgroundColor: Colors.secStroke },
+  videoTile: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1F1F1F' },
+  playCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playIcon: { fontSize: 16, color: Colors.textBlack, marginLeft: 2 },
 
   docRow: {
     flexDirection: 'row',

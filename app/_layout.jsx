@@ -9,8 +9,6 @@ import { SetupProvider } from '../context/SetupContext';
 import { NotificationsProvider } from '../context/NotificationsContext';
 import { RoomsProvider } from '../context/RoomsContext';
 import { EnrollmentProvider } from '../context/EnrollmentContext';
-import { AnnouncementsProvider } from '../context/AnnouncementsContext';
-import { EventsProvider } from '../context/EventsContext';
 import { ChatProvider } from '../context/ChatContext';
 import { paperTheme } from '../constants/theme';
 
@@ -40,13 +38,9 @@ export default function RootLayout() {
               <NotificationsProvider>
                 <RoomsProvider>
                   <EnrollmentProvider>
-                    <AnnouncementsProvider>
-                      <EventsProvider>
-                        <ChatProvider>
-                          <Stack screenOptions={{ headerShown: false }} />
-                        </ChatProvider>
-                      </EventsProvider>
-                    </AnnouncementsProvider>
+                    <ChatProvider>
+                      <Stack screenOptions={{ headerShown: false }} />
+                    </ChatProvider>
                   </EnrollmentProvider>
                 </RoomsProvider>
               </NotificationsProvider>

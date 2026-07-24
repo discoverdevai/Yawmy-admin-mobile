@@ -10,6 +10,20 @@
 
 export const BASE_URL = 'https://nursery-be.onrender.com/api';
 
+// Host without the trailing "/api" — auth-protected file paths from the backend
+// (e.g. "/api/files/nursery/{id}/logo") already include "/api", so they resolve
+// against the bare host.
+export const FILES_BASE = BASE_URL.replace(/\/api\/?$/, '');
+
+/**
+ * Build an absolute URL for a backend file path (logo, photo, media). Returns
+ * null for empty input; passes absolute URLs through unchanged.
+ */
+export function fileUrl(path) {
+  if (!path) return null;
+  return /^https?:\/\//.test(path) ? path : `${FILES_BASE}${path}`;
+}
+
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 
 // Token getter – set by AuthContext so every request can attach Authorization
@@ -43,6 +57,11 @@ export async function apiRequest(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Multipart uploads (e.g. the nursery logo) pass a FormData body. In that case
+  // we must NOT set Content-Type — fetch adds it with the required boundary — and
+  // the body must be sent as-is rather than JSON-stringified.
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
@@ -50,11 +69,11 @@ export async function apiRequest(endpoint, options = {}) {
     const response = await fetch(`${BASE_URL}${endpoint}`, {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isForm ? {} : { 'Content-Type': 'application/json' }),
         Accept: 'application/json',
         ...headers,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
       signal: controller.signal,
     });
 
@@ -65,7 +84,9 @@ export async function apiRequest(endpoint, options = {}) {
         (data && data.message) ||
         (data && data.error) ||
         `Request failed (${response.status})`;
-      throw new Error(message);
+      const err = new Error(message);
+      err.status = response.status; // let callers branch on 401/409/etc.
+      throw err;
     }
 
     return data;

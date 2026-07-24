@@ -1,49 +1,95 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Image } from 'expo-image';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Location from '../../assets/icons/location.svg';
 import Calendar from '../../assets/icons/calendar.svg';
+import AuthImage from '../../components/AuthImage';
 import DeleteChildModal from '../../components/DeleteChildModal';
-import { useEvents } from '../../context/EventsContext';
+import ErrorModal from '../../components/ErrorModal';
+import { getEvent, deleteEvent } from '../../services/eventService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
+
+const eventFallback = require('../../assets/images/rooms/sunshine.png');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const TYPE_LABELS = { HOLIDAY: 'Holiday', PARENT_TEACHER_MEETING: 'Parent Meeting' };
+
+// "2024-03-30" + "22:30:00" -> "Mar 30- 10:30 PM"
+const fmtWhen = (d, t) => {
+  let datePart = '';
+  if (d) {
+    const [, m, day] = d.split('-').map(Number);
+    if (m) datePart = `${MONTHS[m - 1]} ${day}`;
+  }
+  let timePart = '';
+  if (t) {
+    const [hh, mm] = t.split(':').map(Number);
+    if (!Number.isNaN(hh)) {
+      const period = hh < 12 ? 'AM' : 'PM';
+      timePart = `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${period}`;
+    }
+  }
+  return [datePart, timePart].filter(Boolean).join('- ');
+};
 
 export default function EventDetails() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const { events, deleteEvent } = useEvents();
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const item = events.find((e) => e.id === id) || events[0];
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getEvent(id);
+      setItem(data);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the event.');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/events');
   };
 
-  const confirmDelete = () => {
-    setShowDelete(false);
-    deleteEvent(item.id);
-    router.replace('/events');
+  const confirmDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteEvent(id);
+      setShowDelete(false);
+      router.replace('/events');
+    } catch (e) {
+      setShowDelete(false);
+      setError(e.message || 'Could not delete the event.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
-  if (!item) {
+  if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.header}>
-          <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
-            <ArrowLeft width={24} height={24} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Event Details</Text>
-        </View>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
       </SafeAreaView>
     );
   }
 
-  const { category, title, desc, location = 'At Nursery', date, image } = item;
+  const when = fmtWhen(item?.eventDate, item?.eventTime);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -57,54 +103,58 @@ export default function EventDetails() {
         <Text style={styles.headerTitle}>Event Details</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Banner */}
-        <View style={styles.banner}>
-          <Image source={image} style={styles.bannerImg} contentFit="cover" />
-          <View style={styles.bannerOverlay} />
-          {!!category && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{category}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Title + description */}
-        <View style={styles.body}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.desc}>{desc}</Text>
-        </View>
-
-        {/* Meta pills */}
-        <View style={styles.metaList}>
-          <View style={styles.pill}>
-            <Location width={24} height={24} />
-            <Text style={styles.pillText}>{location}</Text>
+      {item && (
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Banner */}
+          <View style={styles.banner}>
+            <AuthImage path={item.imageUrl} fallback={eventFallback} style={styles.bannerImg} contentFit="cover" />
+            <View style={styles.bannerOverlay} />
+            {!!item.eventType && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{TYPE_LABELS[item.eventType] || item.eventType}</Text>
+              </View>
+            )}
           </View>
-          {!!date && (
+
+          {/* Title + description */}
+          <View style={styles.body}>
+            <Text style={styles.title}>{item.title}</Text>
+            <Text style={styles.desc}>{item.description}</Text>
+          </View>
+
+          {/* Meta pills */}
+          <View style={styles.metaList}>
             <View style={styles.pill}>
-              <Calendar width={24} height={24} />
-              <Text style={styles.pillText}>{date}</Text>
+              <Location width={24} height={24} />
+              <Text style={styles.pillText}>At Nursery</Text>
             </View>
-          )}
-        </View>
-      </ScrollView>
+            {!!when && (
+              <View style={styles.pill}>
+                <Calendar width={24} height={24} />
+                <Text style={styles.pillText}>{when}</Text>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      )}
 
       {/* Footer */}
-      <View style={styles.footer}>
-        <Pressable
-          style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}
-          onPress={() => setShowDelete(true)}
-        >
-          <Text style={styles.deleteText}>Delete</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
-          onPress={() => router.push({ pathname: '/add-event', params: { id: item.id } })}
-        >
-          <Text style={styles.editText}>Edit</Text>
-        </Pressable>
-      </View>
+      {item && (
+        <View style={styles.footer}>
+          <Pressable
+            style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}
+            onPress={() => setShowDelete(true)}
+          >
+            <Text style={styles.deleteText}>Delete</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
+            onPress={() => router.push({ pathname: '/add-event', params: { id } })}
+          >
+            <Text style={styles.editText}>Edit</Text>
+          </Pressable>
+        </View>
+      )}
 
       <DeleteChildModal
         visible={showDelete}
@@ -112,6 +162,18 @@ export default function EventDetails() {
         message="Are you sure you want to delete this event? This action cannot be undone."
         onCancel={() => setShowDelete(false)}
         onConfirm={confirmDelete}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => {
+          const wasLoadError = !item;
+          setError(null);
+          if (wasLoadError) goBack();
+        }}
       />
     </SafeAreaView>
   );

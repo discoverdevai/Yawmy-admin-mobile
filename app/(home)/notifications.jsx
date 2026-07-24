@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -13,7 +14,12 @@ const emptyImage = require('../../assets/images/notifications-empty.png');
 
 export default function Notifications() {
   const router = useRouter();
-  const { items, markAllRead, deleteAll } = useNotifications();
+  const { items, markRead, markAllRead, deleteAll, refresh } = useNotifications();
+
+  // Refresh the list whenever the screen opens.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -62,17 +68,26 @@ export default function Notifications() {
             </Pressable>
           </View>
 
-          {/* List */}
+          {/* List — tapping an unread one marks it read */}
           <ScrollView showsVerticalScrollIndicator={false}>
             {items.map((n) => (
-              <View key={n.id} style={[styles.item, !n.read && styles.itemUnread]}>
+              <Pressable
+                key={n.id}
+                style={[styles.item, !n.read && styles.itemUnread]}
+                onPress={() => {
+                  if (!n.read) markRead(n.id);
+                }}
+              >
                 {n.read ? (
                   <BellOutline width={24} height={24} />
                 ) : (
                   <BellFilled width={24} height={24} />
                 )}
-                <Text style={styles.itemText}>{n.text}</Text>
-              </View>
+                <View style={styles.itemBody}>
+                  {!!n.title && <Text style={styles.itemTitle}>{n.title}</Text>}
+                  {!!n.body && <Text style={styles.itemText}>{n.body}</Text>}
+                </View>
+              </Pressable>
             ))}
           </ScrollView>
         </>
@@ -132,13 +147,19 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.secStroke,
   },
   itemUnread: { backgroundColor: Colors.accentBgLight },
+  itemBody: { flex: 1, gap: 2 },
+  itemTitle: {
+    fontFamily: Fonts.bold,
+    fontWeight: '600',
+    fontSize: 14,
+    color: Colors.textBlack,
+  },
   itemText: {
-    flex: 1,
     fontFamily: Fonts.medium,
     fontWeight: '500',
-    fontSize: 14,
-    lineHeight: 21,
-    color: Colors.textBlack,
+    fontSize: 13,
+    lineHeight: 20,
+    color: Colors.gray,
   },
 
   // Empty state

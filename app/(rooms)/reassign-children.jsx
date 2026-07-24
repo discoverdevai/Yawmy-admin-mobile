@@ -1,19 +1,28 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Image } from 'expo-image';
+import { useEffect, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Refresh from '../../assets/icons/refresh.svg';
 import Done from '../../assets/icons/done.svg';
+import RoomIcon from '../../assets/icons/tab-rooms.svg';
+import AuthImage from '../../components/AuthImage';
 import ReassignChildModal from '../../components/ReassignChildModal';
 import ErrorModal from '../../components/ErrorModal';
-import { useRooms } from '../../context/RoomsContext';
-import { CHILDREN, ROOM_CAPACITY } from '../../constants/people';
+import { getRoom, getRooms, archiveRoomWithReassignment } from '../../services/roomsService';
+import { getChildren } from '../../services/childrenService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-const avatar = require('../../assets/images/child-avatar.png');
+const avatarFallback = require('../../assets/images/child-avatar.png');
+const shortId = (id) => String(id || '').replace(/-/g, '').slice(0, 8).toUpperCase();
 
 function Radio({ selected, disabled }) {
   return (
@@ -26,40 +35,60 @@ function Radio({ selected, disabled }) {
 export default function ReassignChildren() {
   const router = useRouter();
   const { roomId } = useLocalSearchParams();
-  const { rooms, moveChildren, archiveRoom } = useRooms();
 
-  // Staged choices (nothing is moved until "Reassign Children" is pressed).
+  const [source, setSource] = useState(null);
+  const [rooms, setRooms] = useState([]); // other active rooms (destinations)
+  const [sourceChildren, setSourceChildren] = useState([]); // children to move
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Staged choices — nothing is applied until "Reassign Children" is pressed.
   const [bulkTarget, setBulkTarget] = useState(null); // upper radio: one room or none
   const [individual, setIndividual] = useState({}); // { [childId]: roomId }
   const [picker, setPicker] = useState({ visible: false, childId: null });
-  const [slotsError, setSlotsError] = useState(null); // { room, slots, count }
+  const [slotsError, setSlotsError] = useState(null);
 
-  const sourceId = Number(roomId);
-  const source = rooms.find((r) => r.id === sourceId);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [src, allRooms, kids] = await Promise.all([
+        getRoom(roomId),
+        getRooms(false), // active rooms only
+        getChildren({ roomId }),
+      ]);
+      setSource(src);
+      setRooms((allRooms || []).filter((r) => r.id !== roomId));
+      setSourceChildren(kids || []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the room.');
+    } finally {
+      setLoading(false);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    if (roomId) load();
+  }, [roomId, load]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/rooms');
   };
 
-  if (!source) {
-    return <SafeAreaView style={styles.container} edges={['top']} />;
-  }
-
-  const sourceChildren = source.childIds
-    .map((id) => CHILDREN.find((c) => c.id === id))
-    .filter(Boolean);
-
   // Available slots reflect staged individual choices so counts stay honest.
-  const stagedTo = (roomId2) => Object.values(individual).filter((id) => id === roomId2).length;
-  const targetRooms = rooms
-    .filter((r) => r.id !== sourceId)
-    .map((r) => ({ ...r, slots: Math.max(ROOM_CAPACITY - r.childIds.length - stagedTo(r.id), 0) }));
+  const stagedTo = (rid) => Object.values(individual).filter((id) => id === rid).length;
+  const targetRooms = rooms.map((r) => ({
+    ...r,
+    slots: Math.max((r.capacity ?? 0) - (r.childCount ?? 0) - stagedTo(r.id), 0),
+  }));
 
   const bulkSelected = bulkTarget != null;
   const remaining = sourceChildren.filter((c) => individual[c.id] == null);
   const canSubmit =
-    sourceChildren.length === 0 || remaining.length === 0 || bulkSelected;
+    !submitting &&
+    (sourceChildren.length === 0 || remaining.length === 0 || bulkSelected);
 
   const toggleBulk = (id) => setBulkTarget((prev) => (prev === id ? null : id));
 
@@ -72,7 +101,8 @@ export default function ReassignChildren() {
     setPicker({ visible: false, childId: null });
   };
 
-  const commit = () => {
+  const commit = async () => {
+    if (!canSubmit) return;
     const restIds = remaining.map((c) => c.id);
 
     // The bulk room must have enough free slots for everyone still unassigned.
@@ -85,19 +115,40 @@ export default function ReassignChildren() {
       }
     }
 
-    // Group staged individual reassignments by destination room.
-    const byTarget = {};
-    Object.entries(individual).forEach(([cid, rid]) => {
-      (byTarget[rid] = byTarget[rid] || []).push(Number(cid));
-    });
-    Object.entries(byTarget).forEach(([rid, ids]) => moveChildren(sourceId, Number(rid), ids));
+    // Build the full child -> room map (staged individuals + the rest to bulk).
+    const reassignments = Object.entries(individual).map(([childId, rid]) => ({
+      childId,
+      roomId: rid,
+    }));
+    if (restIds.length && bulkTarget != null) {
+      restIds.forEach((childId) => reassignments.push({ childId, roomId: bulkTarget }));
+    }
 
-    // Everyone not handled individually goes to the bulk room.
-    if (restIds.length && bulkTarget != null) moveChildren(sourceId, bulkTarget, restIds);
-
-    archiveRoom(sourceId);
-    router.replace({ pathname: '/rooms', params: { archived: '1' } });
+    setSubmitting(true);
+    try {
+      await archiveRoomWithReassignment(roomId, reassignments);
+      router.replace({ pathname: '/rooms', params: { archived: '1' } });
+    } catch (e) {
+      setError(e.message || 'Could not reassign the children.');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
+            <ArrowLeft width={24} height={24} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Reassign Children</Text>
+        </View>
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -134,12 +185,16 @@ export default function ReassignChildren() {
               >
                 <View style={styles.roomLeft}>
                   <View style={styles.roomAvatar}>
-                    <Image source={r.img} style={styles.roomAvatarImg} contentFit="contain" />
+                    {r.imageUrl ? (
+                      <AuthImage path={r.imageUrl} style={styles.roomAvatarImg} contentFit="cover" />
+                    ) : (
+                      <RoomIcon width={22} height={22} />
+                    )}
                   </View>
                   <View style={styles.roomText}>
                     <Text style={[styles.roomName, disabled && styles.dim]}>{r.name}</Text>
                     <Text style={styles.roomSlots}>
-                      {r.childIds.length} children, {r.slots} available slots
+                      {r.childCount} children, {r.slots} available slots
                     </Text>
                   </View>
                 </View>
@@ -159,10 +214,15 @@ export default function ReassignChildren() {
               const done = individual[c.id] != null;
               return (
                 <View key={c.id} style={styles.childCard}>
-                  <Image source={avatar} style={styles.childAvatar} contentFit="cover" />
+                  <AuthImage
+                    path={c.photoUrl}
+                    fallback={avatarFallback}
+                    style={styles.childAvatar}
+                    contentFit="cover"
+                  />
                   <View style={styles.childText}>
-                    <Text style={styles.childName}>{c.name}</Text>
-                    <Text style={styles.childId}>ID: {c.childId}</Text>
+                    <Text style={styles.childName} numberOfLines={1}>{c.fullName}</Text>
+                    <Text style={styles.childId}>ID: {shortId(c.id)}</Text>
                   </View>
                   {done ? (
                     <View style={styles.doneBadge}>
@@ -197,7 +257,7 @@ export default function ReassignChildren() {
           onPress={commit}
           disabled={!canSubmit}
         >
-          <Text style={styles.ctaText}>Reassign Children</Text>
+          <Text style={styles.ctaText}>{submitting ? 'Reassigning…' : 'Reassign Children'}</Text>
         </Pressable>
       </SafeAreaView>
 
@@ -220,6 +280,14 @@ export default function ReassignChildren() {
         }
         buttonText="Got It"
         onClose={() => setSlotsError(null)}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -278,8 +346,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secStroke,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  roomAvatarImg: { width: 28, height: 28 },
+  roomAvatarImg: { width: 40, height: 40, borderRadius: Radii.button },
   roomText: { flex: 1, gap: Spacing.xs },
   roomName: {
     fontFamily: Fonts.bold,
@@ -319,7 +388,7 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
   },
   childAvatar: { width: 40, height: 40, borderRadius: 20 },
-  childText: { flex: 1, gap: Spacing.sm },
+  childText: { flex: 1, gap: Spacing.xs },
   childName: {
     fontFamily: Fonts.bold,
     fontWeight: '600',

@@ -53,6 +53,7 @@ export default function AddMemberModal({
   const [roleOpen, setRoleOpen] = useState(false);
   const [errors, setErrors] = useState({}); // { name, email, role }
   const [notice, setNotice] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
@@ -106,17 +107,28 @@ export default function AddMemberModal({
     return Object.keys(next).length === 0;
   };
 
-  const handleAdd = () => {
-    if (!validate()) return;
-    onAdd({
-      name: name.trim(),
-      email: email.trim(),
-      role,
-      avatar: image ? { uri: image } : null,
-      status: 'pending', // invited, awaiting sign-up
-    });
-    reset();
-    onClose();
+  const handleAdd = async () => {
+    if (!validate() || submitting) return;
+    setSubmitting(true);
+    try {
+      // onAdd may be async (real invite API); only close on success.
+      await onAdd({
+        name: name.trim(),
+        email: email.trim(),
+        role,
+        avatar: image ? { uri: image } : null,
+        status: 'pending', // invited, awaiting sign-up
+      });
+      reset();
+      onClose();
+    } catch (e) {
+      setNotice({
+        title: 'Invitation failed',
+        message: e?.message || 'Could not send the invitation. Please try again.',
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleClose = () => {
@@ -255,10 +267,13 @@ export default function AddMemberModal({
               </View>
 
               <Pressable
-                style={({ pressed }) => [styles.addBtn, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.addBtn, (pressed || submitting) && styles.pressed]}
                 onPress={handleAdd}
+                disabled={submitting}
               >
-                <Text style={styles.addBtnText}>Add And Sent Invitation</Text>
+                <Text style={styles.addBtnText}>
+                  {submitting ? 'Sending…' : 'Add And Sent Invitation'}
+                </Text>
               </Pressable>
             </ScrollView>
           </SafeAreaView>

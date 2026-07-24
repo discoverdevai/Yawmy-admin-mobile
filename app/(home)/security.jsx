@@ -8,20 +8,23 @@ import Key from '../../assets/icons/key.svg';
 import ChevronDown from '../../assets/icons/chevron-down.svg';
 import Logout from '../../assets/icons/logout.svg';
 import SignOutModal from '../../components/SignOutModal';
+import { useAuth } from '../../context/AuthContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 export default function Security() {
   const router = useRouter();
   const [showSignOut, setShowSignOut] = useState(false);
+  const { signOutAll } = useAuth();
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/profile');
   };
 
-  const confirmSignOut = () => {
-    // TODO: invalidate all sessions on the backend when available.
+  // Revokes every session for this user, then signs this device out too.
+  const confirmSignOut = async () => {
     setShowSignOut(false);
+    await signOutAll();
     router.replace('/sign-in');
   };
 

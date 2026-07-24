@@ -9,13 +9,14 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import PasswordInput from '../../components/PasswordInput';
 import SuccessModal from '../../components/SuccessModal';
+import ErrorModal from '../../components/ErrorModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
-import { setUserPassword } from '../../constants/dummyUser';
+import { resetPassword } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const hero = require('../../assets/images/secure-password.png');
@@ -24,9 +25,12 @@ const MIN_LENGTH = 8;
 
 export default function ResetPassword() {
   const router = useRouter();
+  const { token } = useLocalSearchParams();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
   const navTimer = useRef(null);
@@ -42,7 +46,7 @@ export default function ResetPassword() {
   useEffect(() => () => clearTimeout(navTimer.current), []);
 
   const showMismatch = confirm.length > 0 && password !== confirm;
-  const canSubmit = password.length >= MIN_LENGTH && password === confirm;
+  const canSubmit = password.length >= MIN_LENGTH && password === confirm && !submitting;
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -55,13 +59,20 @@ export default function ResetPassword() {
     router.replace('/sign-in');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) return;
-    // Update the locally stored password (TODO: real update-password API).
-    setUserPassword(password);
-    setShowSuccess(true);
-    // Auto-navigate to Sign In after showing the success alert.
-    navTimer.current = setTimeout(handleBackToSignIn, 1800);
+    setSubmitting(true);
+    try {
+      // POST /auth/reset-password { token, newPassword } → 204
+      await resetPassword(token, password);
+      setShowSuccess(true);
+      // Auto-navigate to Sign In after showing the success alert.
+      navTimer.current = setTimeout(handleBackToSignIn, 1800);
+    } catch (e) {
+      setError(e.message || 'Could not reset your password. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -135,6 +146,14 @@ export default function ResetPassword() {
         title="Password Reset Successful"
         message="Your password has been updated. You can now sign in with your new password."
         buttonText="Back to Sign In"
+      />
+
+      <ErrorModal
+        visible={!!error}
+        onClose={() => setError(null)}
+        title="Reset failed"
+        message={error}
+        buttonText="Try Again"
       />
     </SafeAreaView>
   );

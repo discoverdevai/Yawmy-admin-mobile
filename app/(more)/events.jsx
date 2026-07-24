@@ -1,17 +1,67 @@
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Image } from 'expo-image';
+import { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Location from '../../assets/icons/location.svg';
 import Calendar from '../../assets/icons/calendar.svg';
-import { useEvents } from '../../context/EventsContext';
+import AuthImage from '../../components/AuthImage';
+import ErrorModal from '../../components/ErrorModal';
+import { getEvents } from '../../services/eventService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
+
+const eventFallback = require('../../assets/images/rooms/sunshine.png');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export const TYPE_LABELS = {
+  HOLIDAY: 'Holiday',
+  PARENT_TEACHER_MEETING: 'Parent Meeting',
+};
+export const typeLabel = (v) => TYPE_LABELS[v] || v;
+
+// "2024-03-30" + "22:30:00" -> "Mar 30- 10:30 PM"
+export const fmtWhen = (d, t) => {
+  let datePart = '';
+  if (d) {
+    const [, m, day] = d.split('-').map(Number);
+    if (m) datePart = `${MONTHS[m - 1]} ${day}`;
+  }
+  let timePart = '';
+  if (t) {
+    const [hh, mm] = t.split(':').map(Number);
+    if (!Number.isNaN(hh)) {
+      const period = hh < 12 ? 'AM' : 'PM';
+      timePart = `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${period}`;
+    }
+  }
+  return [datePart, timePart].filter(Boolean).join('- ');
+};
 
 export default function Events() {
   const router = useRouter();
-  const { events: EVENTS } = useEvents();
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getEvents();
+      setEvents(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load events.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -31,42 +81,48 @@ export default function Events() {
       </View>
 
       {/* List */}
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {EVENTS.map((e) => (
-          <Pressable
-            key={e.id}
-            style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-            onPress={() => router.push({ pathname: '/event-details', params: { id: e.id } })}
-          >
-            {/* Banner */}
-            <View style={styles.banner}>
-              <Image source={e.image} style={styles.bannerImg} contentFit="cover" />
-              <View style={styles.bannerOverlay} />
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{e.category}</Text>
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      ) : (
+        <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+          {events.map((e) => (
+            <Pressable
+              key={e.id}
+              style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+              onPress={() => router.push({ pathname: '/event-details', params: { id: e.id } })}
+            >
+              {/* Banner */}
+              <View style={styles.banner}>
+                <AuthImage path={e.imageUrl} fallback={eventFallback} style={styles.bannerImg} contentFit="cover" />
+                <View style={styles.bannerOverlay} />
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{typeLabel(e.eventType)}</Text>
+                </View>
               </View>
-            </View>
 
-            {/* Info */}
-            <View style={styles.info}>
-              <View style={styles.infoText}>
-                <Text style={styles.title}>{e.title}</Text>
-                <Text style={styles.desc}>{e.desc}</Text>
-              </View>
-              <View style={styles.metaRow}>
-                <View style={styles.metaItem}>
-                  <Location width={16} height={16} />
-                  <Text style={styles.metaText}>{e.location}</Text>
+              {/* Info */}
+              <View style={styles.info}>
+                <View style={styles.infoText}>
+                  <Text style={styles.title}>{e.title}</Text>
+                  <Text style={styles.desc} numberOfLines={2}>{e.description}</Text>
                 </View>
-                <View style={styles.metaItem}>
-                  <Calendar width={16} height={16} />
-                  <Text style={styles.metaText}>{e.date}</Text>
+                <View style={styles.metaRow}>
+                  <View style={styles.metaItem}>
+                    <Location width={16} height={16} />
+                    <Text style={styles.metaText}>At Nursery</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Calendar width={16} height={16} />
+                    <Text style={styles.metaText}>{fmtWhen(e.eventDate, e.eventTime)}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          </Pressable>
-        ))}
-      </ScrollView>
+            </Pressable>
+          ))}
+
+          {events.length === 0 && <Text style={styles.empty}>No events yet.</Text>}
+        </ScrollView>
+      )}
 
       {/* Footer */}
       <View style={styles.footer}>
@@ -77,6 +133,14 @@ export default function Events() {
           <Text style={styles.ctaText}>Add New Event</Text>
         </Pressable>
       </View>
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -125,6 +189,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm + 4 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   metaText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.primaryText },
+  empty: { textAlign: 'center', fontFamily: Fonts.regular, fontSize: 14, color: Colors.gray, marginTop: Spacing.lg },
 
   footer: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
   cta: {

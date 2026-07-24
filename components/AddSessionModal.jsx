@@ -14,14 +14,14 @@ import ChevronDown from '../assets/icons/chevron-down.svg';
 import Check from '../assets/icons/check.svg';
 import TimePickerModal from './TimePickerModal';
 import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
-import { useRooms } from '../context/RoomsContext';
+import { getTeachers } from '../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
-export default function AddSessionModal({ visible, onClose, onAdd, session }) {
-  const { enrolledTeachers } = useRooms();
+export default function AddSessionModal({ visible, onClose, onAdd, session, submitting }) {
   const isEdit = !!session;
   const [name, setName] = useState('');
-  const [teachers, setTeachers] = useState([]);
+  const [teacherList, setTeacherList] = useState([]); // [{ id, fullName }]
+  const [teacherId, setTeacherId] = useState(null); // exactly one teacher
   const [from, setFrom] = useState(null);
   const [to, setTo] = useState(null);
   const [open, setOpen] = useState(null); // 'teacher' | null
@@ -37,11 +37,23 @@ export default function AddSessionModal({ visible, onClose, onAdd, session }) {
     }).start();
   }, [keyboardHeight, shift]);
 
+  // Load the real teachers whenever the sheet opens.
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    getTeachers()
+      .then((list) => alive && setTeacherList(Array.isArray(list) ? list : []))
+      .catch(() => alive && setTeacherList([]));
+    return () => {
+      alive = false;
+    };
+  }, [visible]);
+
   // On open, prefill from the session being edited (or start empty).
   useEffect(() => {
     if (visible) {
       setName(session?.name || '');
-      setTeachers(session?.teachers || []);
+      setTeacherId(session?.teacherId || null);
       setFrom(session?.from || null);
       setTo(session?.to || null);
       setOpen(null);
@@ -49,16 +61,19 @@ export default function AddSessionModal({ visible, onClose, onAdd, session }) {
     }
   }, [visible, session]);
 
-  const canSubmit = name.trim() && teachers.length > 0 && from && to;
+  const canSubmit = name.trim() && teacherId && from && to && !submitting;
 
   const handleAdd = () => {
     if (!canSubmit) return;
-    onAdd({ name: name.trim(), teachers, from, to });
+    onAdd({ name: name.trim(), teacherId, from, to });
   };
 
   const toggle = (field) => setOpen((o) => (o === field ? null : field));
-  const toggleTeacher = (t) =>
-    setTeachers((list) => (list.includes(t) ? list.filter((x) => x !== t) : [...list, t]));
+  const selectTeacher = (id) => {
+    setTeacherId(id);
+    setOpen(null);
+  };
+  const teacherName = teacherList.find((t) => t.id === teacherId)?.fullName;
 
   const confirmTime = (value) => {
     if (picker === 'from') setFrom(value);
@@ -109,10 +124,10 @@ export default function AddSessionModal({ visible, onClose, onAdd, session }) {
                 >
                   <View style={styles.dropdownRow}>
                     <Text
-                      style={[styles.placeholder, teachers.length > 0 && styles.filled]}
+                      style={[styles.placeholder, teacherId && styles.filled]}
                       numberOfLines={1}
                     >
-                      {teachers.length > 0 ? teachers.join(', ') : 'Select teacher'}
+                      {teacherName || 'Select teacher'}
                     </Text>
                     <ChevronDown
                       width={24}
@@ -124,21 +139,25 @@ export default function AddSessionModal({ visible, onClose, onAdd, session }) {
                 {open === 'teacher' && (
                   <View style={styles.panel}>
                     <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                      {enrolledTeachers.map((t) => {
-                        const selected = teachers.includes(t);
-                        return (
-                          <Pressable
-                            key={t}
-                            style={styles.optionRow}
-                            onPress={() => toggleTeacher(t)}
-                          >
-                            <Text style={styles.optionName}>{t}</Text>
-                            <View style={[styles.checkbox, selected && styles.checkboxOn]}>
-                              {selected && <Check width={16} height={16} />}
-                            </View>
-                          </Pressable>
-                        );
-                      })}
+                      {teacherList.length === 0 ? (
+                        <Text style={styles.emptyOption}>No teachers available yet.</Text>
+                      ) : (
+                        teacherList.map((t) => {
+                          const selected = teacherId === t.id;
+                          return (
+                            <Pressable
+                              key={t.id}
+                              style={styles.optionRow}
+                              onPress={() => selectTeacher(t.id)}
+                            >
+                              <Text style={styles.optionName}>{t.fullName}</Text>
+                              <View style={[styles.radio, selected && styles.radioOn]}>
+                                {selected && <View style={styles.radioDot} />}
+                              </View>
+                            </Pressable>
+                          );
+                        })
+                      )}
                     </ScrollView>
                   </View>
                 )}
@@ -173,7 +192,9 @@ export default function AddSessionModal({ visible, onClose, onAdd, session }) {
                 onPress={handleAdd}
                 disabled={!canSubmit}
               >
-                <Text style={styles.addBtnText}>{isEdit ? 'Edit Session' : 'Add Session'}</Text>
+                <Text style={styles.addBtnText}>
+                  {submitting ? 'Saving…' : isEdit ? 'Edit Session' : 'Add Session'}
+                </Text>
               </Pressable>
             </ScrollView>
           </SafeAreaView>
@@ -237,16 +258,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   optionName: { flexShrink: 1, fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.textBlack },
-  checkbox: {
+  radio: {
     width: 24,
     height: 24,
-    borderRadius: 6,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: Colors.stroke,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxOn: { borderColor: Colors.primary },
+  radioOn: { borderColor: Colors.primary },
+  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.primary },
+  emptyOption: {
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    color: Colors.gray,
+    textAlign: 'center',
+    paddingVertical: Spacing.md,
+  },
 
   timeRow: { flexDirection: 'row', gap: Spacing.sm },
   timeBox: {

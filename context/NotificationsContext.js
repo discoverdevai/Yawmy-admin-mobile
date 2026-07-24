@@ -1,33 +1,86 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useCallback, useEffect, useState } from 'react';
+import { useAuth } from './AuthContext';
+import {
+  listNotifications,
+  getUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteAllNotifications,
+} from '../services/notificationService';
 
 const NotificationsContext = createContext(null);
 
-const INITIAL = [
-  { id: 1, text: 'Admin sent you an announcement.', read: false },
-  { id: 2, text: 'Admin sent you an announcement.', read: false },
-  { id: 3, text: 'Arts & Creativity Day ,Saturday, April 26 · 9:00 AM.', read: true },
-  { id: 4, text: 'New event scheduled, Progress Discussion Meeting.', read: true },
-  { id: 5, text: 'New event scheduled, Progress Discussion Meeting.', read: true },
-  { id: 6, text: 'New event scheduled, Progress Discussion Meeting.', read: true },
-  { id: 7, text: 'New event scheduled, Progress Discussion Meeting.', read: true },
-  { id: 8, text: 'New event scheduled, Progress Discussion Meeting.', read: true },
-];
-
 export function NotificationsProvider({ children }) {
-  const [items, setItems] = useState(INITIAL);
+  const { isAuthenticated } = useAuth();
+  const [items, setItems] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(false);
 
-  const markAllRead = () =>
+  // Pull the list + the badge count. The badge uses the dedicated
+  // /unread-count endpoint (cheap) so the home screen is accurate.
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [list, count] = await Promise.all([
+        listNotifications('all'),
+        getUnreadCount(),
+      ]);
+      setItems(Array.isArray(list) ? list : []);
+      setUnreadCount(count?.unread ?? 0);
+    } catch (_) {
+      // keep whatever we had; screen still renders
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Lightweight badge refresh (count only) — used on home-screen focus.
+  const refreshUnreadCount = useCallback(async () => {
+    try {
+      const count = await getUnreadCount();
+      setUnreadCount(count?.unread ?? 0);
+    } catch (_) {}
+  }, []);
+
+  // Load on login; clear on logout.
+  useEffect(() => {
+    if (isAuthenticated) {
+      refresh();
+    } else {
+      setItems([]);
+      setUnreadCount(0);
+    }
+  }, [isAuthenticated, refresh]);
+
+  // Mark ONE read. Callers only invoke this for unread items, so the badge
+  // decrement is safe. Optimistic; the API call follows.
+  const markRead = useCallback(async (id) => {
+    setItems((list) => list.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      await markNotificationRead(id);
+    } catch (_) {}
+  }, []);
+
+  const markAllRead = useCallback(async () => {
     setItems((list) => list.map((n) => ({ ...n, read: true })));
-  const deleteAll = () => setItems([]);
+    setUnreadCount(0);
+    try {
+      await markAllNotificationsRead();
+    } catch (_) {}
+  }, []);
 
-  const unreadCount = useMemo(
-    () => items.filter((n) => !n.read).length,
-    [items]
-  );
+  const deleteAll = useCallback(async () => {
+    setItems([]);
+    setUnreadCount(0);
+    try {
+      await deleteAllNotifications();
+    } catch (_) {}
+  }, []);
 
   return (
     <NotificationsContext.Provider
-      value={{ items, unreadCount, markAllRead, deleteAll }}
+      value={{ items, unreadCount, loading, refresh, refreshUnreadCount, markRead, markAllRead, deleteAll }}
     >
       {children}
     </NotificationsContext.Provider>

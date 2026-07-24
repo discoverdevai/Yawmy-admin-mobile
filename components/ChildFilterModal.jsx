@@ -57,24 +57,22 @@ function AgeSlider({ value, onChange }) {
 }
 
 /**
- * Children filter (Figma 598-114587): by rooms (multi), gender (single) and an
- * age slider. Opens with nothing selected.
+ * Children filter: by rooms (multi) and an age slider (age is derived from the
+ * child's date of birth). Opens with nothing selected.
  */
 export default function ChildFilterModal({
   visible,
   rooms = [],
-  initial = { rooms: [], gender: null, ageMonths: null },
+  initial = { rooms: [], ageMonths: null },
   onClose,
   onApply,
 }) {
   const [selRooms, setSelRooms] = useState([]);
-  const [gender, setGender] = useState(null);
   const [ageMonths, setAgeMonths] = useState(null);
 
   useEffect(() => {
     if (!visible) return;
     setSelRooms(initial.rooms || []);
-    setGender(initial.gender || null);
     setAgeMonths(initial.ageMonths ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -82,11 +80,10 @@ export default function ChildFilterModal({
   const toggleRoom = (r) =>
     setSelRooms((list) => (list.includes(r) ? list.filter((x) => x !== r) : [...list, r]));
 
-  const count = selRooms.length + (gender ? 1 : 0) + (ageMonths != null ? 1 : 0);
+  const count = selRooms.length + (ageMonths != null ? 1 : 0);
 
   const resetAll = () => {
     setSelRooms([]);
-    setGender(null);
     setAgeMonths(null);
   };
 
@@ -127,25 +124,6 @@ export default function ChildFilterModal({
                   </View>
                 </View>
 
-                {/* By gender */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionLabel}>By Gender</Text>
-                  <View style={styles.genderRow}>
-                    {['Male', 'Female'].map((g) => {
-                      const on = gender === g;
-                      return (
-                        <Pressable
-                          key={g}
-                          onPress={() => setGender(on ? null : g)}
-                          style={[styles.genderChip, on && styles.chipOn]}
-                        >
-                          <Text style={[styles.chipText, on && styles.chipTextOn]}>{g}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-
                 {/* By age */}
                 <View style={[styles.section, styles.sectionLast]}>
                   <Text style={styles.sectionLabel}>By Age</Text>
@@ -155,7 +133,7 @@ export default function ChildFilterModal({
 
               <Pressable
                 style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
-                onPress={() => onApply({ rooms: selRooms, gender, ageMonths })}
+                onPress={() => onApply({ rooms: selRooms, ageMonths })}
               >
                 <Text style={styles.ctaText}>Apply Filter{count > 0 ? ` (${count})` : ''}</Text>
               </Pressable>
@@ -214,18 +192,6 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: Colors.primaryBgLight, borderColor: Colors.primary },
   chipText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.gray },
   chipTextOn: { color: Colors.primaryText },
-
-  genderRow: { flexDirection: 'row', gap: Spacing.sm + 4 },
-  genderChip: {
-    flex: 1,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radii.button,
-    backgroundColor: '#F2F2F2',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
 
   sliderWrap: { paddingTop: 28 },
   tooltip: {

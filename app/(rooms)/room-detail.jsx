@@ -1,8 +1,16 @@
-import { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Modal } from 'react-native';
-import { Image } from 'expo-image';
+import { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  Modal,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Search from '../../assets/icons/search.svg';
@@ -11,226 +19,324 @@ import MoreVertical from '../../assets/icons/more-vertical.svg';
 import EditIcon from '../../assets/icons/edit-dark.svg';
 import RefreshIcon from '../../assets/icons/refresh-dark.svg';
 import Trash from '../../assets/icons/trash.svg';
+import AuthImage from '../../components/AuthImage';
+import ErrorModal from '../../components/ErrorModal';
 import AddChildModal from '../../components/AddChildModal';
 import ChildNotFoundModal from '../../components/ChildNotFoundModal';
 import AlreadyAssignedModal from '../../components/AlreadyAssignedModal';
-import DeleteChildModal from '../../components/DeleteChildModal';
 import ReassignChildModal from '../../components/ReassignChildModal';
 import ReassignTeacherModal from '../../components/ReassignTeacherModal';
-import { useRooms } from '../../context/RoomsContext';
-import { useEnrollment } from '../../context/EnrollmentContext';
-import { CHILDREN, ROOM_CAPACITY, teacherId } from '../../constants/people';
+import DeleteChildModal from '../../components/DeleteChildModal';
+import RoomArchivedModal from '../../components/RoomArchivedModal';
+import {
+  getRoom,
+  getRooms,
+  getRoomTeachers,
+  getTeachers,
+  getTeacherRooms,
+  assignTeacher,
+  unassignTeacher,
+} from '../../services/roomsService';
+import { getChildren, reassignChildRoom } from '../../services/childrenService';
+import { deleteStaffMember } from '../../services/staffService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-const avatar = require('../../assets/images/child-avatar.png');
-const teacherAvatar = require('../../assets/images/avatar-demo.png');
+const avatarFallback = require('../../assets/images/child-avatar.png');
+const teacherAvatarFallback = require('../../assets/images/avatar-demo.png');
+const shortId = (id) => String(id || '').replace(/-/g, '').slice(0, 8).toUpperCase();
+const normalize = (s) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 export default function RoomDetail() {
   const router = useRouter();
   const { roomId } = useLocalSearchParams();
-  const {
-    rooms,
-    archivedRooms,
-    toggleChild,
-    roomOfChild,
-    childInfo,
-    updateRoom,
-    enrolledTeachers,
-    deleteTeacher,
-    setTeacherRooms,
-    teacherInfo,
-    enrolledChildren,
-    deleteChild,
-  } = useRooms();
-  const { resetParentDraft, updateParentDraft } = useEnrollment();
-  const [tab, setTab] = useState('children');
+
+  const [tab, setTab] = useState('children'); // default: children
   const [query, setQuery] = useState('');
+  const [room, setRoom] = useState(null);
+  const [children, setChildren] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [notFound, setNotFound] = useState(false);
-  const [pendingChildName, setPendingChildName] = useState('');
-  const [conflict, setConflict] = useState(null); // { child, room }
+  const [duplicateName, setDuplicateName] = useState(null); // >1 child with that name
+  const [conflict, setConflict] = useState(null); // { id, name, roomName } in another room
+  const [busy, setBusy] = useState(false);
+  const [childMenu, setChildMenu] = useState({ visible: false, top: 0, child: null });
+  const [reassignChild, setReassignChild] = useState(null); // child being reassigned
+  const [reassignRooms, setReassignRooms] = useState([]); // destination rooms + slots
+  const [deleteChild, setDeleteChild] = useState(null); // child being removed from room
+  const [teacherMenu, setTeacherMenu] = useState({ visible: false, top: 0, teacher: null });
+  const [reassignTeacher, setReassignTeacher] = useState(null); // { teacherId, assignedIds }
+  const [reassignTeacherRooms, setReassignTeacherRooms] = useState([]); // all rooms
+  const [deleteTeacher, setDeleteTeacher] = useState(null); // teacher being deleted
+  const [successMsg, setSuccessMsg] = useState(null); // success toast text
   const [showAddTeacher, setShowAddTeacher] = useState(false);
   const [teacherNotFound, setTeacherNotFound] = useState(false);
+  const [teacherDuplicateName, setTeacherDuplicateName] = useState(null);
+  const [teacherAlreadyIn, setTeacherAlreadyIn] = useState(false);
   const [pendingTeacherName, setPendingTeacherName] = useState('');
-  const [menu, setMenu] = useState({ visible: false, top: 0, childId: null });
-  const [deleteChildId, setDeleteChildId] = useState(null);
-  const [reassignChildId, setReassignChildId] = useState(null);
-  const [teacherMenu, setTeacherMenu] = useState({ visible: false, top: 0, name: null });
-  const [deleteTeacherName, setDeleteTeacherName] = useState(null);
-  const [reassignTeacherName, setReassignTeacherName] = useState(null);
 
-  const rid = Number(roomId);
-  const room = rooms.find((r) => r.id === rid) || archivedRooms.find((r) => r.id === rid);
+  const load = useCallback(async () => {
+    if (!roomId) return;
+    setLoading(true);
+    try {
+      const [r, kids, tchrs] = await Promise.all([
+        getRoom(roomId),
+        getChildren({ roomId }),
+        getRoomTeachers(roomId).catch(() => []),
+      ]);
+      setRoom(r);
+      setChildren(kids || []);
+      setTeachers(tchrs || []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the room.');
+    } finally {
+      setLoading(false);
+    }
+  }, [roomId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/rooms');
   };
 
-  if (!room) return <SafeAreaView style={styles.container} edges={['top']} />;
-
-  const q = query.trim().toLowerCase();
-  const children = (room.childIds || [])
-    .map((id) => CHILDREN.find((c) => c.id === id))
-    .filter(Boolean)
-    .map((c) => ({ ...c, name: childInfo[c.id]?.name ?? c.name }))
-    .filter((c) => c.name.toLowerCase().includes(q) || c.childId.includes(q));
-  const teachers = (room.teachers || []).filter((t) =>
-    (teacherInfo[t]?.name ?? t).toLowerCase().includes(q)
-  );
-
-  const onAdd = () => {
-    if (tab === 'children') setShowAdd(true);
-    else setShowAddTeacher(true);
-  };
-
-  // Add a teacher by name — assign if enrolled (in the teachers list), else
-  // show the "not found" prompt. Mirrors the add-child flow.
-  const handleAddTeacher = (name) => {
-    const normalize = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
-    const match = enrolledTeachers.find((t) => normalize(t) === normalize(name));
-    setShowAddTeacher(false);
-    if (!match) {
-      setPendingTeacherName(name.trim());
-      setTeacherNotFound(true);
-      return;
-    }
-    if (!(room.teachers || []).includes(match)) {
-      updateRoom(rid, { teachers: [...(room.teachers || []), match] });
-    }
-  };
-
-  // Add a child by name — assign if found (one room per child), else show
-  // the "not found" prompt; warn if they already belong to another room.
-  const handleAddChild = (name) => {
-    const normalize = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
-    const match = enrolledChildren.find((c) => normalize(c.name) === normalize(name));
+  // Add a child to this room by name: resolve the name against the nursery's
+  // children. Handles: none found → enroll prompt; several with the same name →
+  // failure; already in another room → confirm move; otherwise assign.
+  const handleAddChild = async (name) => {
     setShowAdd(false);
-    if (!match) {
-      setPendingChildName(name.trim());
-      setNotFound(true);
-      return;
+    if (busy) return;
+    setBusy(true);
+    try {
+      const all = await getChildren({ includeUnenrolled: false });
+      const matches = (all || []).filter((c) => normalize(c.fullName) === normalize(name));
+      if (matches.length === 0) {
+        setNotFound(true);
+        return;
+      }
+      if (matches.length > 1) {
+        setDuplicateName(name.trim()); // can't tell them apart by name
+        return;
+      }
+      const match = matches[0];
+      if (match.roomId === roomId) return; // already in this room
+      if (match.roomId) {
+        // Lives in another room — confirm before moving.
+        setConflict({ id: match.id, name: match.fullName, roomName: match.roomName });
+        return;
+      }
+      await reassignChildRoom(match.id, roomId); // unassigned → assign here
+      await load();
+    } catch (e) {
+      setError(e.message || 'Could not add this child to the room.');
+    } finally {
+      setBusy(false);
     }
-    if ((room.childIds || []).includes(match.id)) return; // already in this room
-    const other = roomOfChild(match.id, rid);
-    if (other) {
-      setConflict({ child: match, room: other });
-      return;
-    }
-    toggleChild(rid, match.id);
   };
 
-  // "Enroll Teacher" → open the Enrollment Staff tab's Add Member sheet,
-  // prefilled with the typed name, to invite the new teacher.
-  const enrollTeacher = () => {
-    setTeacherNotFound(false);
-    router.push({ pathname: '/enrollment', params: { tab: 'staff', addName: pendingTeacherName } });
-  };
-
-  // "Enroll Child" → start the Invite Parent wizard prefilled with the typed
-  // child name and this room, so the child is enrolled under the new parent.
-  const enrollChild = () => {
-    setNotFound(false);
-    resetParentDraft();
-    updateParentDraft({
-      children: [
-        {
-          image: null,
-          name: pendingChildName,
-          dob: '',
-          roomId: rid,
-          roomName: room.name,
-          guardians: [],
-          pickups: [],
-        },
-      ],
-    });
-    router.push('/invite-parent');
-  };
-
-  const confirmMove = () => {
-    if (conflict) toggleChild(rid, conflict.child.id);
+  // Confirm moving a child out of their old room into this one.
+  const confirmMove = async () => {
+    const c = conflict;
     setConflict(null);
+    if (!c) return;
+    setBusy(true);
+    try {
+      await reassignChildRoom(c.id, roomId);
+      await load();
+    } catch (e) {
+      setError(e.message || 'Could not move this child.');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const openChildMenu = (childId, top) => setMenu({ visible: true, top, childId });
-  const closeMenu = () => setMenu((m) => ({ ...m, visible: false }));
+  const openChildMenu = (child, top) => setChildMenu({ visible: true, top, child });
+  const closeChildMenu = () => setChildMenu((m) => ({ ...m, visible: false }));
 
   const editChildInfo = () => {
-    const childId = menu.childId;
-    closeMenu();
-    router.push({ pathname: '/edit-child', params: { childId: String(childId), roomId: String(rid) } });
+    const child = childMenu.child;
+    closeChildMenu();
+    if (child) {
+      router.push({
+        pathname: '/edit-child',
+        params: { childId: String(child.id), roomId: String(roomId) },
+      });
+    }
   };
 
-  const requestDeleteChild = () => {
-    setDeleteChildId(menu.childId);
-    closeMenu();
+  // Reassign: load the destination rooms (with slots) and open the picker.
+  const reassignChildAction = async () => {
+    const child = childMenu.child;
+    closeChildMenu();
+    if (!child) return;
+    try {
+      const all = await getRooms(false); // active rooms
+      const targets = (all || []).map((r) => ({
+        ...r,
+        slots: Math.max((r.capacity ?? 0) - (r.childCount ?? 0), 0),
+      }));
+      setReassignRooms(targets);
+      setReassignChild(child);
+    } catch (e) {
+      setError(e.message || 'Could not load rooms.');
+    }
   };
 
-  const confirmDeleteChild = () => {
-    if (deleteChildId != null) deleteChild(deleteChildId); // removes from every room + enrolled list
-    setDeleteChildId(null);
+  const confirmReassign = async (targetRoomId) => {
+    const child = reassignChild;
+    setReassignChild(null);
+    if (!child) return;
+    try {
+      await reassignChildRoom(child.id, targetRoomId);
+      await load(); // child leaves this room → refresh
+    } catch (e) {
+      setError(e.message || 'Could not reassign the child.');
+    }
   };
 
-  const requestReassign = () => {
-    setReassignChildId(menu.childId);
-    closeMenu();
+  // Delete = remove the child from this room (stays enrolled in the nursery).
+  const deleteChildAction = () => {
+    setDeleteChild(childMenu.child);
+    closeChildMenu();
   };
 
-  // Other rooms this child could move to, with their available slots.
-  const reassignTargets = rooms
-    .filter((r) => r.id !== rid)
-    .map((r) => ({ ...r, slots: ROOM_CAPACITY - r.childIds.length }));
-
-  const confirmReassign = (targetId) => {
-    if (reassignChildId != null) toggleChild(targetId, reassignChildId); // moves child here
-    setReassignChildId(null);
+  const confirmDeleteChild = async () => {
+    const child = deleteChild;
+    setDeleteChild(null);
+    if (!child) return;
+    try {
+      await reassignChildRoom(child.id, null); // unassign from any room
+      await load();
+    } catch (e) {
+      setError(e.message || 'Could not remove the child from the room.');
+    }
   };
 
-  const openTeacherMenu = (name, top) => setTeacherMenu({ visible: true, top, name });
+  // Add a teacher to this room by name: resolve against the nursery's teachers.
+  const handleAddTeacher = async (name) => {
+    setShowAddTeacher(false);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const all = await getTeachers();
+      const matches = (all || []).filter((t) => normalize(t.fullName) === normalize(name));
+      if (matches.length === 0) {
+        setPendingTeacherName(name.trim());
+        setTeacherNotFound(true);
+        return;
+      }
+      if (matches.length > 1) {
+        setTeacherDuplicateName(name.trim());
+        return;
+      }
+      const match = matches[0];
+      if (teachers.some((t) => t.teacherId === match.id)) {
+        setTeacherAlreadyIn(true); // already assigned to this room
+        return;
+      }
+      await assignTeacher(roomId, match.id);
+      await load();
+    } catch (e) {
+      setError(e.message || 'Could not add the teacher to the room.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Teacher 3-dots menu.
+  const openTeacherMenu = (teacher, top) => setTeacherMenu({ visible: true, top, teacher });
   const closeTeacherMenu = () => setTeacherMenu((m) => ({ ...m, visible: false }));
-
-  const editTeacherInfo = () => {
-    const name = teacherMenu.name;
+  const editTeacherAction = () => {
+    const t = teacherMenu.teacher;
     closeTeacherMenu();
-    router.push({ pathname: '/edit-teacher', params: { teacherName: String(name), roomId: String(rid) } });
+    if (t) {
+      router.push({
+        pathname: '/edit-teacher',
+        params: { teacherId: String(t.teacherId), roomId: String(roomId) },
+      });
+    }
+  };
+  // Reassign a teacher across rooms — load all rooms + the teacher's current rooms.
+  const reassignTeacherAction = async () => {
+    const t = teacherMenu.teacher;
+    closeTeacherMenu();
+    if (!t) return;
+    try {
+      const [all, tRooms] = await Promise.all([
+        getRooms(false),
+        getTeacherRooms(t.teacherId).catch(() => []),
+      ]);
+      setReassignTeacherRooms(all || []);
+      setReassignTeacher({
+        teacherId: t.teacherId,
+        assignedIds: (tRooms || []).map((r) => r.roomId),
+      });
+    } catch (e) {
+      setError(e.message || 'Could not load rooms.');
+    }
   };
 
-  const requestDeleteTeacher = () => {
-    setDeleteTeacherName(teacherMenu.name);
+  const confirmReassignTeacher = async (selectedRoomIds) => {
+    const ctx = reassignTeacher;
+    setReassignTeacher(null);
+    if (!ctx) return;
+    try {
+      const sel = new Set(selectedRoomIds);
+      const origSet = new Set(ctx.assignedIds);
+      for (const id of selectedRoomIds) {
+        if (!origSet.has(id)) await assignTeacher(id, ctx.teacherId);
+      }
+      for (const id of ctx.assignedIds) {
+        if (!sel.has(id)) await unassignTeacher(id, ctx.teacherId);
+      }
+      await load(); // teacher may have left this room → refresh
+      setSuccessMsg('Teacher reassigned successfully!');
+    } catch (e) {
+      setError(e.message || 'Could not reassign the teacher.');
+    }
+  };
+
+  const deleteTeacherAction = () => {
+    setDeleteTeacher(teacherMenu.teacher);
     closeTeacherMenu();
   };
 
-  const requestReassignTeacher = () => {
-    setReassignTeacherName(teacherMenu.name);
-    closeTeacherMenu();
+  const confirmDeleteTeacher = async () => {
+    const t = deleteTeacher;
+    setDeleteTeacher(null);
+    if (!t) return;
+    try {
+      await deleteStaffMember(t.teacherId); // full removal from the nursery
+      await load();
+      setSuccessMsg('Teacher deleted successfully!');
+    } catch (e) {
+      setError(e.message || 'Could not delete the teacher.');
+    }
   };
 
-  // Rooms this teacher is currently assigned to (checked by default).
-  const teacherRoomIds = reassignTeacherName
-    ? rooms.filter((r) => (r.teachers || []).includes(reassignTeacherName)).map((r) => r.id)
-    : [];
-
-  const confirmReassignTeacher = (roomIds) => {
-    if (reassignTeacherName) setTeacherRooms(reassignTeacherName, roomIds);
-    setReassignTeacherName(null);
-  };
-
-  const confirmDeleteTeacher = () => {
-    if (deleteTeacherName) deleteTeacher(deleteTeacherName); // removes from every room + enrolled list
-    setDeleteTeacherName(null);
-  };
+  const q = query.trim().toLowerCase();
+  const roomFull = !!room && children.length >= (room.capacity ?? 0);
+  const filteredChildren = children.filter((c) => (c.fullName || '').toLowerCase().includes(q));
+  const filteredTeachers = teachers.filter((t) => (t.teacherName || '').toLowerCase().includes(q));
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
 
-      {/* Header */}
+      {/* Header — room name */}
       <View style={styles.header}>
         <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
           <ArrowLeft width={24} height={24} />
         </Pressable>
-        <Text style={styles.headerTitle}>{room.name}</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>{room?.name || 'Room'}</Text>
       </View>
 
       {/* Children / Teachers toggle */}
@@ -253,7 +359,7 @@ export default function RoomDetail() {
         </Pressable>
       </View>
 
-      {/* Search + add */}
+      {/* Search + add (add child on the children tab) */}
       <View style={styles.searchRow}>
         <View style={styles.searchField}>
           <Search width={24} height={24} />
@@ -265,112 +371,96 @@ export default function RoomDetail() {
             placeholderTextColor={Colors.gray}
           />
         </View>
-        <Pressable style={styles.addBtn} onPress={onAdd}>
+        <Pressable
+          style={[styles.addBtn, tab === 'children' && roomFull && styles.addBtnDisabled]}
+          disabled={tab === 'children' && roomFull}
+          onPress={() => (tab === 'children' ? setShowAdd(true) : setShowAddTeacher(true))}
+        >
           <Plus width={24} height={24} />
         </Pressable>
       </View>
 
       {/* List */}
-      <ScrollView
-        contentContainerStyle={styles.list}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {tab === 'children' ? (
-          children.length === 0 ? (
-            <Text style={styles.empty}>No children in this room.</Text>
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {tab === 'children' ? (
+            filteredChildren.length === 0 ? (
+              <Text style={styles.empty}>No children in this room.</Text>
+            ) : (
+              filteredChildren.map((c) => (
+                <View key={c.id} style={styles.card}>
+                  <AuthImage
+                    path={c.photoUrl}
+                    fallback={avatarFallback}
+                    style={styles.childAvatar}
+                    contentFit="cover"
+                  />
+                  <View style={styles.cardText}>
+                    <Text style={styles.name} numberOfLines={1}>{c.fullName}</Text>
+                    <Text style={styles.sub}>ID: {shortId(c.id)}</Text>
+                  </View>
+                  <Pressable
+                    style={styles.moreBtn}
+                    hitSlop={8}
+                    onPress={(e) => openChildMenu(c, e.nativeEvent.pageY)}
+                  >
+                    <MoreVertical width={24} height={24} />
+                  </Pressable>
+                </View>
+              ))
+            )
+          ) : filteredTeachers.length === 0 ? (
+            <Text style={styles.empty}>No teachers assigned.</Text>
           ) : (
-            children.map((c) => (
-              <View key={c.id} style={styles.card}>
-                <Image source={avatar} style={styles.childAvatar} contentFit="cover" />
+            filteredTeachers.map((t) => (
+              <View key={t.teacherId} style={styles.card}>
+                <AuthImage
+                  path={t.imageUrl}
+                  fallback={teacherAvatarFallback}
+                  style={styles.childAvatar}
+                  contentFit="cover"
+                />
                 <View style={styles.cardText}>
-                  <Text style={styles.name}>{c.name}</Text>
-                  <Text style={styles.sub}>ID: {c.childId}</Text>
+                  <Text style={styles.name} numberOfLines={1}>{t.teacherName}</Text>
+                  <Text style={styles.sub}>ID: {shortId(t.teacherId)}</Text>
                 </View>
                 <Pressable
                   style={styles.moreBtn}
                   hitSlop={8}
-                  onPress={(e) => openChildMenu(c.id, e.nativeEvent.pageY)}
+                  onPress={(e) => openTeacherMenu(t, e.nativeEvent.pageY)}
                 >
                   <MoreVertical width={24} height={24} />
                 </Pressable>
               </View>
             ))
-          )
-        ) : teachers.length === 0 ? (
-          <Text style={styles.empty}>No teachers assigned.</Text>
-        ) : (
-          teachers.map((t) => (
-            <View key={t} style={styles.card}>
-              <Image source={teacherAvatar} style={styles.childAvatar} contentFit="cover" />
-              <View style={styles.cardText}>
-                <Text style={styles.name}>{teacherInfo[t]?.name ?? t}</Text>
-                <Text style={styles.sub}>ID: {teacherId(t)}</Text>
-              </View>
-              <Pressable
-                style={styles.moreBtn}
-                hitSlop={8}
-                onPress={(e) => openTeacherMenu(t, e.nativeEvent.pageY)}
-              >
-                <MoreVertical width={24} height={24} />
-              </Pressable>
-            </View>
-          ))
-        )}
-      </ScrollView>
-
-      <AddChildModal
-        visible={showAdd}
-        onClose={() => setShowAdd(false)}
-        onAdd={handleAddChild}
-      />
-
-      <ChildNotFoundModal
-        visible={notFound}
-        onCancel={() => setNotFound(false)}
-        onEnroll={enrollChild}
-      />
-
-      <AddChildModal
-        visible={showAddTeacher}
-        title="Add Teacher"
-        label="Teacher Name"
-        placeholder="Enter teacher name"
-        buttonText="Add Teacher"
-        onClose={() => setShowAddTeacher(false)}
-        onAdd={handleAddTeacher}
-      />
-
-      <ChildNotFoundModal
-        visible={teacherNotFound}
-        title="Teacher Not Found!"
-        message="This teacher is not registered in the system. Please enroll them first before assigning them."
-        enrollText="Enroll Teacher"
-        onCancel={() => setTeacherNotFound(false)}
-        onEnroll={enrollTeacher}
-      />
-
-      <AlreadyAssignedModal
-        visible={!!conflict}
-        childName={conflict?.child.name}
-        roomName={conflict?.room.name}
-        onCancel={() => setConflict(null)}
-        onMove={confirmMove}
-      />
+          )}
+        </ScrollView>
+      )}
 
       {/* Child actions menu */}
-      <Modal visible={menu.visible} transparent animationType="fade" onRequestClose={closeMenu}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu}>
-          <View style={[styles.menu, { top: menu.top }]}>
+      <Modal
+        visible={childMenu.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeChildMenu}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={closeChildMenu}>
+          <View style={[styles.menu, { top: childMenu.top }]}>
             <Pressable style={styles.menuItem} onPress={editChildInfo}>
               <EditIcon width={24} height={24} />
               <Text style={styles.menuLabel}>Edit Info</Text>
             </Pressable>
-            <Pressable style={styles.menuItem} onPress={requestReassign}>
+            <Pressable style={styles.menuItem} onPress={reassignChildAction}>
               <RefreshIcon width={24} height={24} />
               <Text style={styles.menuLabel}>Reassign</Text>
             </Pressable>
-            <Pressable style={styles.menuItem} onPress={requestDeleteChild}>
+            <Pressable style={styles.menuItem} onPress={deleteChildAction}>
               <Trash width={24} height={24} />
               <Text style={[styles.menuLabel, styles.menuLabelDanger]}>Delete</Text>
             </Pressable>
@@ -387,15 +477,15 @@ export default function RoomDetail() {
       >
         <Pressable style={StyleSheet.absoluteFill} onPress={closeTeacherMenu}>
           <View style={[styles.menu, { top: teacherMenu.top }]}>
-            <Pressable style={styles.menuItem} onPress={editTeacherInfo}>
+            <Pressable style={styles.menuItem} onPress={editTeacherAction}>
               <EditIcon width={24} height={24} />
               <Text style={styles.menuLabel}>Edit Info</Text>
             </Pressable>
-            <Pressable style={styles.menuItem} onPress={requestReassignTeacher}>
+            <Pressable style={styles.menuItem} onPress={reassignTeacherAction}>
               <RefreshIcon width={24} height={24} />
               <Text style={styles.menuLabel}>Reassign</Text>
             </Pressable>
-            <Pressable style={styles.menuItem} onPress={requestDeleteTeacher}>
+            <Pressable style={styles.menuItem} onPress={deleteTeacherAction}>
               <Trash width={24} height={24} />
               <Text style={[styles.menuLabel, styles.menuLabelDanger]}>Delete</Text>
             </Pressable>
@@ -403,34 +493,132 @@ export default function RoomDetail() {
         </Pressable>
       </Modal>
 
+      {/* Add child by name */}
+      <AddChildModal
+        visible={showAdd}
+        onClose={() => setShowAdd(false)}
+        onAdd={handleAddChild}
+      />
+
+      {/* Not registered → offer to enroll (opens the invite-parent flow) */}
+      <ChildNotFoundModal
+        visible={notFound}
+        onCancel={() => setNotFound(false)}
+        onEnroll={() => {
+          setNotFound(false);
+          router.push('/invite-parent');
+        }}
+      />
+
+      {/* More than one child with that name → can't tell them apart */}
+      <ErrorModal
+        visible={!!duplicateName}
+        title="More Than One Child"
+        message={`There is more than one child named “${duplicateName}”, so we can't tell them apart by name. Please make their names unique and try again.`}
+        buttonText="OK"
+        onClose={() => setDuplicateName(null)}
+      />
+
+      {/* Child is in another room → confirm the move */}
+      <AlreadyAssignedModal
+        visible={!!conflict}
+        childName={conflict?.name}
+        roomName={conflict?.roomName}
+        onCancel={() => setConflict(null)}
+        onMove={confirmMove}
+      />
+
+      {/* Reassign this child to another room */}
+      <ReassignChildModal
+        visible={!!reassignChild}
+        rooms={reassignRooms}
+        currentRoomId={roomId}
+        onClose={() => setReassignChild(null)}
+        onConfirm={confirmReassign}
+      />
+
+      {/* Remove this child from the room (stays enrolled) */}
       <DeleteChildModal
-        visible={deleteChildId != null}
-        onCancel={() => setDeleteChildId(null)}
+        visible={!!deleteChild}
+        title="Remove from Room?"
+        message="This child will be unassigned from the room but stays enrolled in the nursery. You can add them to a room again later."
+        onCancel={() => setDeleteChild(null)}
         onConfirm={confirmDeleteChild}
       />
 
-      <DeleteChildModal
-        visible={deleteTeacherName != null}
-        title="Delete Teacher?"
-        message="Are you sure you want to delete this teacher account? This action cannot be undone."
-        onCancel={() => setDeleteTeacherName(null)}
-        onConfirm={confirmDeleteTeacher}
+      {/* Add teacher by name */}
+      <AddChildModal
+        visible={showAddTeacher}
+        title="Add Teacher"
+        label="Teacher Name"
+        placeholder="Enter teacher name"
+        buttonText="Add Teacher"
+        onClose={() => setShowAddTeacher(false)}
+        onAdd={handleAddTeacher}
       />
 
+      {/* Teacher not registered → offer to enroll (invite a new teacher) */}
+      <ChildNotFoundModal
+        visible={teacherNotFound}
+        title="Teacher Not Found!"
+        message="This teacher is not registered in the system. Please enroll them first before assigning them to the room."
+        enrollText="Enroll Teacher"
+        onCancel={() => setTeacherNotFound(false)}
+        onEnroll={() => {
+          setTeacherNotFound(false);
+          router.push({ pathname: '/enrollment', params: { tab: 'staff', addName: pendingTeacherName } });
+        }}
+      />
+
+      {/* More than one teacher with that name */}
+      <ErrorModal
+        visible={!!teacherDuplicateName}
+        title="More Than One Teacher"
+        message={`There is more than one teacher named “${teacherDuplicateName}”, so we can't tell them apart by name. Please make their names unique and try again.`}
+        buttonText="OK"
+        onClose={() => setTeacherDuplicateName(null)}
+      />
+
+      {/* Teacher already assigned to this room */}
+      <ErrorModal
+        visible={teacherAlreadyIn}
+        title="Already in This Room"
+        message="This teacher is already assigned to this room."
+        buttonText="OK"
+        onClose={() => setTeacherAlreadyIn(false)}
+      />
+
+      {/* Reassign teacher across rooms */}
       <ReassignTeacherModal
-        visible={reassignTeacherName != null}
-        rooms={rooms}
-        initialSelected={teacherRoomIds}
-        onClose={() => setReassignTeacherName(null)}
+        visible={!!reassignTeacher}
+        rooms={reassignTeacherRooms}
+        initialSelected={reassignTeacher?.assignedIds || []}
+        onClose={() => setReassignTeacher(null)}
         onConfirm={confirmReassignTeacher}
       />
 
-      <ReassignChildModal
-        visible={reassignChildId != null}
-        rooms={reassignTargets}
-        allowFull
-        onClose={() => setReassignChildId(null)}
-        onConfirm={confirmReassign}
+      {/* Delete teacher from the nursery */}
+      <DeleteChildModal
+        visible={!!deleteTeacher}
+        title="Delete Teacher?"
+        message="Are you sure you want to delete this teacher account? This action cannot be undone."
+        onCancel={() => setDeleteTeacher(null)}
+        onConfirm={confirmDeleteTeacher}
+      />
+
+      {/* Success toast (teacher reassigned, etc.) */}
+      <RoomArchivedModal
+        visible={!!successMsg}
+        title={successMsg || ''}
+        onClose={() => setSuccessMsg(null)}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -447,6 +635,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerTitle: {
+    flex: 1,
     fontFamily: Fonts.bold,
     fontWeight: '700',
     fontSize: 20,
@@ -501,6 +690,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  addBtnDisabled: { opacity: 0.4 },
 
   list: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.lg, gap: Spacing.sm + 4 },
   empty: {
@@ -520,7 +710,7 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
   },
   childAvatar: { width: 40, height: 40, borderRadius: 20 },
-  cardText: { flex: 1, gap: Spacing.sm },
+  cardText: { flex: 1, gap: Spacing.xs },
   name: {
     fontFamily: Fonts.bold,
     fontWeight: '600',
@@ -555,4 +745,3 @@ const styles = StyleSheet.create({
   },
   menuLabelDanger: { color: Colors.redText },
 });
-

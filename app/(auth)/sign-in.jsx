@@ -16,14 +16,16 @@ import Sms from '../../assets/icons/sms.svg';
 import PasswordInput from '../../components/PasswordInput';
 import ErrorModal from '../../components/ErrorModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
-import { validateCredentials } from '../../constants/dummyUser';
+import { useAuth } from '../../context/AuthContext';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 export default function SignIn() {
   const router = useRouter();
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showError, setShowError] = useState(false);
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
 
@@ -37,15 +39,18 @@ export default function SignIn() {
 
   const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const showEmailError = email.trim().length > 0 && !isValidEmail;
-  const canSubmit = isValidEmail && password.length > 0;
+  const canSubmit = isValidEmail && password.length > 0 && !submitting;
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     if (!canSubmit) return;
-    // TODO: replace the hardcoded check with a real auth API call.
-    if (validateCredentials(email, password)) {
+    setSubmitting(true);
+    try {
+      await signIn(email.trim(), password); // POST /auth/login → session
       router.replace('/home');
-    } else {
-      setShowError(true);
+    } catch (e) {
+      setError(e.message || 'The email or password you entered is incorrect.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -130,7 +135,11 @@ export default function SignIn() {
         </View>
       </Animated.View>
 
-      <ErrorModal visible={showError} onClose={() => setShowError(false)} />
+      <ErrorModal
+        visible={!!error}
+        onClose={() => setError(null)}
+        message={error}
+      />
     </SafeAreaView>
   );
 }

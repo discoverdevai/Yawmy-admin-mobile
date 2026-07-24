@@ -66,7 +66,7 @@ export default function SetPassword() {
       // Complete the invite: set password + activate the account.
       const res = await acceptInvite(token, password);
       // Log the new admin in so the nursery-setup steps are authenticated.
-      await activateSession(res.accessToken);
+      await activateSession(res.accessToken, res.refreshToken);
       setShowSuccess(true);
     } catch (e) {
       setError(e.message || 'Could not set your password. Please try again.');

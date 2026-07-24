@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -19,7 +19,7 @@ import AddContactModal from '../../components/AddContactModal';
 import DatePickerModal from '../../components/DatePickerModal';
 import ErrorModal from '../../components/ErrorModal';
 import { useEnrollment } from '../../context/EnrollmentContext';
-import { useRooms } from '../../context/RoomsContext';
+import { getAssignableRooms } from '../../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const makeChild = () => ({
@@ -34,7 +34,13 @@ const makeChild = () => ({
 export default function InviteParentChild() {
   const router = useRouter();
   const { parentDraft, updateParentDraft } = useEnrollment();
-  const { rooms } = useRooms();
+  // Only ACTIVE rooms that still have space (childCount < capacity) — from the API.
+  const [rooms, setRooms] = useState([]);
+  useEffect(() => {
+    getAssignableRooms()
+      .then(setRooms)
+      .catch(() => setRooms([]));
+  }, []);
 
   const [kids, setKids] = useState(() =>
     parentDraft.children && parentDraft.children.length ? parentDraft.children : [makeChild()]

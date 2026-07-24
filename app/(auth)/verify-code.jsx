@@ -10,24 +10,27 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import ErrorModal from '../../components/ErrorModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
-import { RESET_CODE } from '../../constants/dummyUser';
+import { verifyResetOtp, resendResetOtp } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const illustration = require('../../assets/images/otp.png');
 
-const RESEND_SECONDS = 30;
-
 export default function VerifyCode() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const otpSeconds = Number(params.expiresInSeconds) || 30;
+  const [token, setToken] = useState(params.token);
   const [digits, setDigits] = useState(['', '', '', '']);
   const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [showWrong, setShowWrong] = useState(false);
-  const [seconds, setSeconds] = useState(RESEND_SECONDS);
+  const [submitting, setSubmitting] = useState(false);
+  const [seconds, setSeconds] = useState(otpSeconds);
   const inputs = useRef([]);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
@@ -64,21 +67,34 @@ export default function VerifyCode() {
     }
   };
 
-  const handleResend = () => {
+  const handleResend = async () => {
     if (seconds > 0) return;
-    setSeconds(RESEND_SECONDS);
+    try {
+      // POST /auth/resend-reset-otp → new OTP emailed, fresh countdown.
+      const res = await resendResetOtp(token);
+      if (res?.token) setToken(res.token);
+      setSeconds(Number(res?.expiresInSeconds) || otpSeconds);
+    } catch (_) {
+      setSeconds(otpSeconds);
+    }
     setDigits(['', '', '', '']);
     setError(false);
     inputs.current[0]?.focus();
   };
 
-  const handleVerify = () => {
-    if (!complete) return;
-    if (code === RESET_CODE) {
-      router.replace('/reset-password');
-    } else {
+  const handleVerify = async () => {
+    if (!complete || submitting) return;
+    setSubmitting(true);
+    try {
+      // POST /auth/verify-reset-otp → 204 on success.
+      await verifyResetOtp(token, code);
+      router.replace({ pathname: '/reset-password', params: { token } });
+    } catch (e) {
       setError(true); // red borders
+      setErrorMsg(e.message || 'The verification code you entered is incorrect.');
       setShowWrong(true); // wrong-pin modal
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -182,7 +198,7 @@ export default function VerifyCode() {
         visible={showWrong}
         onClose={handleTryAgain}
         title="Wrong PIN"
-        message="The verification code you entered is incorrect. Please try again."
+        message={errorMsg || 'The verification code you entered is incorrect. Please try again.'}
         buttonText="Try Again"
       />
     </SafeAreaView>

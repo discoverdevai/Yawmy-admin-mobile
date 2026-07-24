@@ -1,43 +1,91 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { useCallback, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Filter from '../../assets/icons/filter.svg';
 import AnnounceDoc from '../../assets/icons/announce-doc.svg';
 import EyeSeen from '../../assets/icons/eye-seen.svg';
-import AttendanceFilterModal from '../../components/AttendanceFilterModal';
-import { useAnnouncements } from '../../context/AnnouncementsContext';
+import RoomDateFilterModal from '../../components/RoomDateFilterModal';
+import ErrorModal from '../../components/ErrorModal';
+import { getAnnouncements } from '../../services/announcementService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "2024-03-30" -> "Mar 30"
+const fmtDate = (s) => {
+  if (!s) return '';
+  const [, m, d] = s.split('-').map(Number);
+  return m ? `${MONTHS[m - 1]} ${d}` : '';
+};
+// "22:30:00" -> "10:30 PM"
+const fmtTime = (s) => {
+  if (!s) return '';
+  const [hh, mm] = s.split(':').map(Number);
+  if (Number.isNaN(hh)) return '';
+  const period = hh < 12 ? 'AM' : 'PM';
+  return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${period}`;
+};
+// "2024-03-30" -> "30 Mar 2024" (matches the filter's date format)
+const dateKeyOf = (s) => {
+  if (!s) return '';
+  const [y, m, d] = s.split('-').map(Number);
+  return m ? `${String(d).padStart(2, '0')} ${MONTHS[m - 1]} ${y}` : '';
+};
 
 export default function Announcements() {
   const router = useRouter();
-  const { announcements: ANNOUNCEMENTS } = useAnnouncements();
+  const [announcements, setAnnouncements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   const [roomFilter, setRoomFilter] = useState([]); // applied room names (empty = all)
   const [dateFilter, setDateFilter] = useState(null); // "DD MMM YYYY" | null
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getAnnouncements();
+      setAnnouncements(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load announcements.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Refetch whenever the screen regains focus (after add / edit / delete).
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/more');
   };
 
-  // Apply the filter: keep announcements matching the chosen rooms and/or date.
-  const applyFilter = ({ rooms, date }) => {
-    setRoomFilter(rooms);
-    setDateFilter(date);
-    setShowFilter(false);
-  };
-
-  const roomNames = [...new Set(ANNOUNCEMENTS.map((a) => a.room))];
+  const roomNames = [...new Set(announcements.map((a) => a.roomName || 'Nursery-wide'))];
   const activeCount = roomFilter.length + (dateFilter ? 1 : 0);
 
-  const list = ANNOUNCEMENTS.filter(
-    (a) =>
-      (roomFilter.length === 0 || roomFilter.includes(a.room)) &&
-      (!dateFilter || a.dateKey === dateFilter)
-  );
+  const list = announcements.filter((a) => {
+    const room = a.roomName || 'Nursery-wide';
+    return (
+      (roomFilter.length === 0 || roomFilter.includes(room)) &&
+      (!dateFilter || dateKeyOf(a.announcementDate) === dateFilter)
+    );
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -62,34 +110,43 @@ export default function Announcements() {
       </View>
 
       {/* List */}
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {list.map((a) => (
-          <Pressable
-            key={a.id}
-            style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-            onPress={() => router.push({ pathname: '/announcement-details', params: { id: a.id } })}
-          >
-            <View style={styles.iconBox}>
-              <AnnounceDoc width={24} height={24} />
-            </View>
-            <View style={styles.cardBody}>
-              <View style={styles.cardTop}>
-                <Text style={styles.cardTitle} numberOfLines={1}>
-                  {a.title}
-                </Text>
-                <View style={styles.viewsBadge}>
-                  <EyeSeen width={16} height={16} />
-                  <Text style={styles.viewsText}>{a.views}</Text>
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      ) : (
+        <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+          {list.map((a) => {
+            const when = [fmtDate(a.announcementDate), fmtTime(a.announcementTime)]
+              .filter(Boolean)
+              .join('- ');
+            return (
+              <Pressable
+                key={a.id}
+                style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+                onPress={() => router.push({ pathname: '/announcement-details', params: { id: a.id } })}
+              >
+                <View style={styles.iconBox}>
+                  <AnnounceDoc width={24} height={24} />
                 </View>
-              </View>
-              <Text style={styles.cardText} numberOfLines={3}>{a.body}</Text>
-              <Text style={styles.cardDate}>{a.date}</Text>
-            </View>
-          </Pressable>
-        ))}
+                <View style={styles.cardBody}>
+                  <View style={styles.cardTop}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>
+                      {a.title}
+                    </Text>
+                    <View style={styles.viewsBadge}>
+                      <EyeSeen width={16} height={16} />
+                      <Text style={styles.viewsText}>{a.seenCount ?? 0}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardText} numberOfLines={3}>{a.body}</Text>
+                  {!!when && <Text style={styles.cardDate}>{when}</Text>}
+                </View>
+              </Pressable>
+            );
+          })}
 
-        {list.length === 0 && <Text style={styles.empty}>No announcements found.</Text>}
-      </ScrollView>
+          {list.length === 0 && <Text style={styles.empty}>No announcements found.</Text>}
+        </ScrollView>
+      )}
 
       {/* Footer */}
       <View style={styles.footer}>
@@ -101,12 +158,24 @@ export default function Announcements() {
         </Pressable>
       </View>
 
-      <AttendanceFilterModal
+      <RoomDateFilterModal
         visible={showFilter}
         rooms={roomNames}
         initial={{ rooms: roomFilter, date: dateFilter }}
         onClose={() => setShowFilter(false)}
-        onApply={applyFilter}
+        onApply={({ rooms, date }) => {
+          setRoomFilter(rooms);
+          setDateFilter(date);
+          setShowFilter(false);
+        }}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );

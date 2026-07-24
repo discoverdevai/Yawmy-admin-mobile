@@ -6,7 +6,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import ChevronDown from '../../assets/icons/chevron-down.svg';
 import Check from '../../assets/icons/check.svg';
 import SuccessModal from '../../components/SuccessModal';
+import ErrorModal from '../../components/ErrorModal';
 import { useSetup } from '../../context/SetupContext';
+import {
+  updateNursery,
+  uploadLogo,
+  updateGeofence,
+  toBackendTime,
+  toBackendDays,
+} from '../../services/nurseryService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 // Week starts on Saturday (Egyptian calendar) to match the design order.
@@ -96,6 +104,8 @@ export default function NurseryHours() {
   const setup = useSetup();
   const [open, setOpen] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   const { days, setDays, hours, setHours } = setup;
 
@@ -114,9 +124,44 @@ export default function NurseryHours() {
     else router.replace('/nursery-location-confirm');
   };
 
-  const goNext = () => {
-    // TODO: submit the collected setup data to the backend when available.
-    setShowSuccess(true);
+  // Final step of the wizard: persist everything collected across steps 1–3.
+  const goNext = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // 1. Name + operating hours + working days.
+      await updateNursery({
+        name: setup.nurseryName,
+        hoursStart: toBackendTime(hours.from),
+        hoursEnd: toBackendTime(hours.to),
+        workingDays: toBackendDays(days),
+      });
+
+      // 2. Logo (step 1) — upload the picked file, backend returns the logoUrl.
+      if (setup.logo) {
+        await uploadLogo(setup.logo);
+      }
+
+      // 3. Geofence (step 2) — SetupContext stores center as [lng, lat] + placeName.
+      if (setup.location?.center) {
+        const [lng, lat] = setup.location.center;
+        await updateGeofence({
+          lat,
+          lng,
+          radiusM: Math.round(setup.radius),
+          locationText: setup.location?.placeName || undefined,
+        });
+      }
+
+      setShowSuccess(true);
+    } catch (e) {
+      setNotice({
+        title: 'Setup failed',
+        message: e.message || 'Could not save your nursery setup. Please try again.',
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleContinueToApp = () => {
@@ -225,10 +270,17 @@ export default function NurseryHours() {
             <Text style={styles.outlineText}>Previous</Text>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.button,
+              submitting && styles.buttonDisabled,
+              pressed && styles.pressed,
+            ]}
             onPress={goNext}
+            disabled={submitting}
           >
-            <Text style={styles.buttonText}>Next</Text>
+            <Text style={styles.buttonText}>
+              {submitting ? 'Saving…' : 'Next'}
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -238,6 +290,14 @@ export default function NurseryHours() {
         onContinue={handleContinueToApp}
         title="Nursery Setup Successful!"
         message="Setup is complete. You can now start using your dashboard and manage your nursery."
+      />
+
+      <ErrorModal
+        visible={!!notice}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="OK"
+        onClose={() => setNotice(null)}
       />
     </SafeAreaView>
   );
@@ -446,5 +506,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.white,
   },
+  buttonDisabled: { backgroundColor: Colors.disabledButton },
   pressed: { opacity: 0.85 },
 });

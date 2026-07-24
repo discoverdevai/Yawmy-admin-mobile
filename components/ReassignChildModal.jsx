@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AuthImage from './AuthImage';
+import RoomIcon from '../assets/icons/tab-rooms.svg';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
 /**
@@ -77,12 +78,16 @@ export default function ReassignChildModal({
                       ]}
                     >
                       <View style={styles.roomAvatar}>
-                        <Image source={r.img} style={styles.roomAvatarImg} contentFit="contain" />
+                        {r.imageUrl ? (
+                          <AuthImage path={r.imageUrl} style={styles.roomAvatarImg} contentFit="cover" />
+                        ) : (
+                          <RoomIcon width={22} height={22} />
+                        )}
                       </View>
                       <View style={styles.roomText}>
                         <Text style={styles.roomName}>{r.name}</Text>
                         <Text style={styles.roomSlots}>
-                          {r.childIds.length} children, {r.slots} available slots
+                          {r.childCount} children, {r.slots} available slots
                         </Text>
                       </View>
                     </Pressable>
@@ -173,7 +178,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  roomAvatarImg: { width: 28, height: 28 },
+  roomAvatarImg: { width: 40, height: 40, borderRadius: Radii.button },
   roomText: { flex: 1, gap: Spacing.xs },
   roomName: {
     fontFamily: Fonts.bold,

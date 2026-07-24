@@ -1,5 +1,13 @@
-import { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,38 +15,88 @@ import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import EditIcon from '../../assets/icons/edit-dark.svg';
 import ChevronDown from '../../assets/icons/chevron-down.svg';
 import Check from '../../assets/icons/check.svg';
-import { useEnrollment } from '../../context/EnrollmentContext';
+import RoomArchivedModal from '../../components/RoomArchivedModal';
+import ErrorModal from '../../components/ErrorModal';
+import { getParentMember, updateParentMember } from '../../services/parentService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-const ROLES = ['Mother', 'Father', 'Guardian'];
+const ROLES = ['Mother', 'Father'];
 
 export default function EditParent() {
   const router = useRouter();
-  const { id, tab = 'parents' } = useLocalSearchParams();
-  const { listFor, updateMember } = useEnrollment();
+  const { id } = useLocalSearchParams();
 
-  const member = listFor(tab).find((m) => String(m.id) === String(id)) || {};
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [showSuccess, setShowSuccess] = useState(false);
 
-  const [name, setName] = useState(member.name ?? '');
-  const [email, setEmail] = useState(member.email ?? '');
-  const [role, setRole] = useState(member.role ?? ROLES[0]);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState(ROLES[0]);
   const [roleOpen, setRoleOpen] = useState(false);
+
+  const orig = { name: '', email: '', role: '' };
+  const [snapshot, setSnapshot] = useState(orig);
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const p = await getParentMember(id);
+      setName(p.fullName || '');
+      setEmail(p.email || '');
+      const r = ROLES.find((x) => x.toLowerCase() === (p.relationship || '').toLowerCase()) || p.relationship || ROLES[0];
+      setRole(r);
+      setSnapshot({ name: p.fullName || '', email: p.email || '', role: r });
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the parent.');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/enrollment');
   };
 
-  const handleSave = () => {
-    updateMember(tab, member.id, {
-      name: name.trim() || member.name,
-      email: email.trim(),
-      role,
-    });
-    // Always return to the account details screen after saving.
-    if (router.canGoBack()) router.back();
-    else router.replace({ pathname: '/account-details', params: { id: String(member.id), tab } });
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const patch = {};
+      if (name.trim() && name.trim() !== snapshot.name) patch.fullName = name.trim();
+      if (email.trim() && email.trim() !== snapshot.email) patch.email = email.trim();
+      if (role && role !== snapshot.role) patch.relationship = role;
+      if (Object.keys(patch).length) await updateParentMember(id, patch);
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not save the parent.');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
+            <ArrowLeft width={24} height={24} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Edit Account Info</Text>
+        </View>
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -122,16 +180,34 @@ export default function EditParent() {
 
       {/* Footer */}
       <View style={styles.footer}>
-        <Pressable style={styles.cancelBtn} onPress={goBack}>
+        <Pressable style={styles.cancelBtn} onPress={goBack} disabled={saving}>
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
         <Pressable
-          style={({ pressed }) => [styles.saveBtn, pressed && styles.pressed]}
+          style={({ pressed }) => [styles.saveBtn, (saving || pressed) && styles.pressed]}
           onPress={handleSave}
+          disabled={saving}
         >
-          <Text style={styles.saveText}>Save</Text>
+          <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text>
         </Pressable>
       </View>
+
+      <RoomArchivedModal
+        visible={showSuccess}
+        title="Parent updated successfully!"
+        onClose={() => {
+          setShowSuccess(false);
+          goBack();
+        }}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
+      />
     </SafeAreaView>
   );
 }

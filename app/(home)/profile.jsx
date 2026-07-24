@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +10,13 @@ import Language from '../../assets/icons/language.svg';
 import Shield from '../../assets/icons/shield.svg';
 import Logout from '../../assets/icons/logout.svg';
 import SignOutModal from '../../components/SignOutModal';
+import AuthImage from '../../components/AuthImage';
+import { useAuth } from '../../context/AuthContext';
+import { useData } from '../../context/DataContext';
+import {
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from '../../services/notificationService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const avatar = require('../../assets/images/avatar-demo.png');
@@ -48,15 +54,34 @@ export default function Profile() {
   const router = useRouter();
   const [notify, setNotify] = useState(true);
   const [showSignOut, setShowSignOut] = useState(false);
+  const { signOut, user } = useAuth();
+  const { nurseryName, logoUrl } = useData();
+
+  // Load the current notification preference (announcementsEnabled) for the toggle.
+  useEffect(() => {
+    getNotificationPreferences()
+      .then((p) => setNotify(p.announcementsEnabled))
+      .catch(() => {});
+  }, []);
+
+  const toggleNotify = async (next) => {
+    setNotify(next); // optimistic
+    try {
+      await updateNotificationPreferences({ announcementsEnabled: next });
+    } catch (_) {
+      setNotify(!next); // revert on failure
+    }
+  };
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/home');
   };
 
-  const confirmSignOut = () => {
-    // TODO: clear auth/session when real auth is wired.
+  // Signs out this device only; the user's other devices stay signed in.
+  const confirmSignOut = async () => {
     setShowSignOut(false);
+    await signOut();
     router.replace('/sign-in');
   };
 
@@ -79,12 +104,12 @@ export default function Profile() {
           <Text style={styles.headerTitle}>Profile</Text>
         </View>
 
-        {/* Profile card */}
+        {/* Profile card: nursery logo + admin name + nursery name */}
         <View style={styles.profileCard}>
-          <Image source={avatar} style={styles.avatar} contentFit="cover" />
+          <AuthImage path={logoUrl} fallback={avatar} style={styles.avatar} />
           <View style={styles.profileText}>
-            <Text style={styles.name}>Hanna Calzoni</Text>
-            <Text style={styles.role}>Nursery Admin</Text>
+            <Text style={styles.name}>{user?.fullName || 'Admin'}</Text>
+            <Text style={styles.role}>{nurseryName || 'Nursery Admin'}</Text>
           </View>
         </View>
 
@@ -99,7 +124,7 @@ export default function Profile() {
           <Row
             Icon={Notification}
             label="Notification"
-            right={<Toggle value={notify} onChange={setNotify} />}
+            right={<Toggle value={notify} onChange={toggleNotify} />}
           />
           <Row
             Icon={Language}

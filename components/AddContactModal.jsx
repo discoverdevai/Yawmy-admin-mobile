@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ChevronDown from '../assets/icons/chevron-down.svg';
 import Check from '../assets/icons/check.svg';
+import EditIcon from '../assets/icons/edit-dark.svg';
 import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../constants/countries';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
@@ -170,14 +171,15 @@ export default function AddContactModal({
                 const nameField = (
                   <View style={styles.fieldGroup} key="name">
                     <Text style={styles.label}>{nameLabel}</Text>
-                    <View style={styles.inputBox}>
+                    <View style={[styles.inputBox, styles.nameBox]}>
                       <TextInput
-                        style={styles.input}
+                        style={[styles.input, styles.nameInput]}
                         value={name}
                         onChangeText={setName}
                         placeholder={namePlaceholder}
                         placeholderTextColor={Colors.gray}
                       />
+                      {isEdit && <EditIcon width={24} height={24} />}
                     </View>
                   </View>
                 );
@@ -286,6 +288,8 @@ const styles = StyleSheet.create({
   },
   inputBoxOpen: { backgroundColor: Colors.tapsBg, borderColor: Colors.primary },
   input: { padding: 0, fontFamily: Fonts.regular, fontSize: 14, color: Colors.textBlack },
+  nameBox: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  nameInput: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
   placeholder: { flexShrink: 1, fontFamily: Fonts.regular, fontSize: 14, color: Colors.gray },
   filled: { fontFamily: Fonts.regular, fontSize: 14, color: Colors.textBlack },

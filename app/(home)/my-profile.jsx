@@ -1,21 +1,41 @@
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
+import { useAuth } from '../../context/AuthContext';
+import { getProfile } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const decor = require('../../assets/images/profile-decor.png');
 
-const FIELDS = [
-  { label: 'Teacher Name', value: 'Hanna Calzoni' },
-  { label: 'Email', value: 'hanna.calzoni@gmail.com' },
-  { label: 'Role', value: 'Nursery Admin' },
-];
+const ROLE_LABELS = {
+  SUPER_ADMIN: 'Super Admin',
+  ADMIN: 'Nursery Admin',
+  TEACHER: 'Teacher',
+  PARENT: 'Parent',
+};
 
 export default function MyProfile() {
   const router = useRouter();
+  const { user } = useAuth();
+  // Show the cached profile immediately, then refresh from GET /me on open.
+  const [profile, setProfile] = useState(user);
+
+  useEffect(() => {
+    getProfile()
+      .then(setProfile)
+      .catch(() => {});
+  }, []);
+
+  const p = profile || user;
+  const fields = [
+    { label: 'Full Name', value: p?.fullName || '—' },
+    { label: 'Email', value: p?.email || '—' },
+    { label: 'Role', value: ROLE_LABELS[p?.role] || p?.role || '—' },
+  ];
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -50,7 +70,7 @@ export default function MyProfile() {
 
         {/* Read-only fields */}
         <View style={styles.fields}>
-          {FIELDS.map((f) => (
+          {fields.map((f) => (
             <View key={f.label} style={styles.fieldGroup}>
               <Text style={styles.label}>{f.label}</Text>
               <View style={styles.fieldBox}>

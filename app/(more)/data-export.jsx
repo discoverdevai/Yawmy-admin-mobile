@@ -12,7 +12,9 @@ import ExportChildModal from '../../components/ExportChildModal';
 import ExportAttendanceModal from '../../components/ExportAttendanceModal';
 import ExportIncidentModal from '../../components/ExportIncidentModal';
 import SuccessModal from '../../components/SuccessModal';
-import { useRooms } from '../../context/RoomsContext';
+import { useAuth } from '../../context/AuthContext';
+import { getRooms } from '../../services/roomsService';
+import { getChildren } from '../../services/childrenService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const ITEMS = [
@@ -23,11 +25,27 @@ const ITEMS = [
 
 export default function DataExport() {
   const router = useRouter();
-  const { rooms, enrolledChildren } = useRooms();
+  const { token } = useAuth();
   const [showChild, setShowChild] = useState(false);
   const [showAttendance, setShowAttendance] = useState(false);
   const [showIncident, setShowIncident] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+
+  // Real rooms + children (with backend UUIDs) for the export modals.
+  const [exportRooms, setExportRooms] = useState([]);
+  const [exportChildren, setExportChildren] = useState([]);
+  useEffect(() => {
+    getRooms(false)
+      .then((r) => setExportRooms((r || []).map((x) => ({ id: x.id, name: x.name }))))
+      .catch(() => {});
+    getChildren()
+      .then((c) =>
+        setExportChildren(
+          (c || []).map((x) => ({ id: x.id, name: x.fullName, roomId: x.roomId, room: x.roomName || '—' }))
+        )
+      )
+      .catch(() => {});
+  }, []);
 
   // Auto-dismiss the themed download confirmation.
   useEffect(() => {
@@ -40,12 +58,6 @@ export default function DataExport() {
     if (router.canGoBack()) router.back();
     else router.replace('/more');
   };
-
-  // Each enrolled child paired with the room they belong to.
-  const childRoom = {};
-  rooms.forEach((r) => r.childIds.forEach((cid) => { childRoom[cid] = r.name; }));
-  const allChildren = enrolledChildren.map((c) => ({ ...c, room: childRoom[c.id] || '—' }));
-  const roomNames = rooms.map((r) => r.name);
 
   const onRow = (key) => {
     if (key === 'child') setShowChild(true);
@@ -83,24 +95,26 @@ export default function DataExport() {
 
       <ExportChildModal
         visible={showChild}
-        allChildren={allChildren}
-        roomNames={roomNames}
+        rooms={exportRooms}
+        token={token}
         onClose={() => setShowChild(false)}
         onDownloaded={() => setShowSuccess(true)}
       />
 
       <ExportAttendanceModal
         visible={showAttendance}
-        allChildren={allChildren}
-        roomNames={roomNames}
+        childList={exportChildren}
+        rooms={exportRooms}
+        token={token}
         onClose={() => setShowAttendance(false)}
         onDownloaded={() => setShowSuccess(true)}
       />
 
       <ExportIncidentModal
         visible={showIncident}
-        allChildren={allChildren}
-        roomNames={roomNames}
+        childList={exportChildren}
+        rooms={exportRooms}
+        token={token}
         onClose={() => setShowIncident(false)}
         onDownloaded={() => setShowSuccess(true)}
       />

@@ -7,10 +7,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import EditIcon from '../../assets/icons/edit-dark.svg';
 import RoomArchivedModal from '../../components/RoomArchivedModal';
+import ErrorModal from '../../components/ErrorModal';
 import { useEnrollment } from '../../context/EnrollmentContext';
+import {
+  inviteFamily,
+  uploadChildPhoto,
+  toIsoDate,
+  parseContact,
+} from '../../services/enrollmentService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const initialsOf = (name) =>
   (name || '')
@@ -43,8 +48,10 @@ function InfoCard({ rows }) {
 
 export default function InviteParentReview() {
   const router = useRouter();
-  const { parentDraft, addMember, resetParentDraft } = useEnrollment();
+  const { parentDraft, resetParentDraft } = useEnrollment();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const { name, email, relationship, children = [] } = parentDraft;
   const multi = children.length > 1;
@@ -62,28 +69,39 @@ export default function InviteParentReview() {
     ...kid.pickups.map((p, i) => ({ label: `Pickup ${i + 1}:`, value: contactReview(p) })),
   ];
 
-  const submit = () => {
-    const today = new Date();
-    const joined = `${MONTHS[today.getMonth()]} ${String(today.getDate()).padStart(2, '0')}, ${today.getFullYear()}`;
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // 1. Atomic enroll: parent + children + guardians (emergency contacts) + pickups.
+      const payload = {
+        parent: { email, fullName: name, relationship },
+        children: children.map((c) => ({
+          fullName: c.name,
+          dob: toIsoDate(c.dob),
+          roomId: c.roomId,
+          guardians: (c.guardians || []).map(parseContact),
+          pickups: (c.pickups || []).map(parseContact),
+        })),
+      };
+      const res = await inviteFamily(payload);
 
-    addMember('parents', {
-      name,
-      email,
-      role: relationship,
-      status: 'pending',
-      avatar: null,
-      joined,
-      linkedChildren: children.map((c) => ({ name: c.name, room: c.roomName })),
-    });
-    children.forEach((c) =>
-      addMember('children', {
-        name: c.name,
-        role: c.roomName,
-        status: 'pending',
-        avatar: c.image ? { uri: c.image } : null,
-      })
-    );
-    setShowSuccess(true);
+      // 2. Upload each child's image (response children are in the same order).
+      await Promise.all(
+        (res.children || []).map((rc, i) => {
+          const uri = children[i]?.image;
+          return uri ? uploadChildPhoto(rc.childId, uri).catch(() => {}) : null;
+        })
+      );
+
+      // The Enrollment list refetches from the API on focus, so the new parent
+      // + children appear there without any local optimistic update.
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not send the invitation. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -156,8 +174,12 @@ export default function InviteParentReview() {
 
       {/* Footer */}
       <View style={styles.footer}>
-        <Pressable style={({ pressed }) => [styles.cta, pressed && styles.pressed]} onPress={submit}>
-          <Text style={styles.ctaText}>Add And Sent Invitation</Text>
+        <Pressable
+          style={({ pressed }) => [styles.cta, submitting && styles.pressed, pressed && styles.pressed]}
+          onPress={submit}
+          disabled={submitting}
+        >
+          <Text style={styles.ctaText}>{submitting ? 'Sending…' : 'Add And Sent Invitation'}</Text>
         </Pressable>
       </View>
 
@@ -172,6 +194,14 @@ export default function InviteParentReview() {
           if (router.canDismiss()) router.dismissAll();
           router.replace({ pathname: '/enrollment', params: { tab: 'parents' } });
         }}
+      />
+
+      <ErrorModal
+        visible={!!error}
+        onClose={() => setError(null)}
+        title="Invitation failed"
+        message={error}
+        buttonText="Try Again"
       />
     </SafeAreaView>
   );

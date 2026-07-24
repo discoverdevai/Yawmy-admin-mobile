@@ -1,7 +1,7 @@
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
-import { Image } from 'expo-image';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Notification from '../../assets/icons/notification.svg';
 import Calendar from '../../assets/icons/calendar.svg';
@@ -10,26 +10,21 @@ import StatTeacher from '../../assets/icons/stat-teacher.svg';
 import StatCheck from '../../assets/icons/stat-check.svg';
 import StatReport from '../../assets/icons/stat-report.svg';
 import BottomTabBar from '../../components/BottomTabBar';
-import { useSetup } from '../../context/SetupContext';
+import AuthImage from '../../components/AuthImage';
+import { useAuth } from '../../context/AuthContext';
+import { useData } from '../../context/DataContext';
 import { useNotifications } from '../../context/NotificationsContext';
+import { getDashboard } from '../../services/nurseryService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const avatar = require('../../assets/images/avatar-demo.png');
 
+// Card look stays fixed; the value comes from the dashboard API by `key` + `unit`.
 const STATS = [
-  { id: 'children', title: 'Total Children', value: '20 Child', cardBg: '#FFFFE8', iconBg: '#898900', Icon: StatChildren },
-  { id: 'teachers', title: 'Total teachers', value: '20 Teacher', cardBg: '#EAF2E1', iconBg: '#4D8F00', Icon: StatTeacher },
-  { id: 'checked', title: 'Checked In', value: '20 Child', cardBg: '#FFF3DC', iconBg: '#E2725B', Icon: StatCheck },
-  { id: 'incident', title: 'Incident Reports', value: '20 Report', cardBg: '#F2F2F2', iconBg: '#5000F1', Icon: StatReport },
-];
-
-const ATTENDANCE = [
-  { label: 'Sat', value: 13 },
-  { label: 'Sun', value: 7 },
-  { label: 'Mon', value: 18 },
-  { label: 'Tue', value: 20 },
-  { label: 'Wed', value: 16 },
-  { label: 'Thu', value: 9 },
+  { id: 'children', title: 'Total Children',  key: 'totalChildren',  unit: 'Child',   cardBg: '#FFFFE8', iconBg: '#898900', Icon: StatChildren },
+  { id: 'teachers', title: 'Total teachers',  key: 'totalTeachers',  unit: 'Teacher', cardBg: '#EAF2E1', iconBg: '#4D8F00', Icon: StatTeacher },
+  { id: 'checked',  title: 'Checked In',      key: 'checkedInToday', unit: 'Child',   cardBg: '#FFF3DC', iconBg: '#E2725B', Icon: StatCheck },
+  { id: 'incident', title: 'Incident Reports', key: 'incidentsToday', unit: 'Report',  cardBg: '#F2F2F2', iconBg: '#5000F1', Icon: StatReport },
 ];
 
 const ACTIVITY = [
@@ -39,7 +34,13 @@ const ACTIVITY = [
 ];
 
 const CHART_HEIGHT = 190;
-const CHART_MAX = 20;
+
+// Round a max value up to a "nice" chart ceiling (multiple of 20, min 20) so the
+// y-axis quarters stay whole numbers (20/15/10/5/0, 40/30/20/10/0, …).
+function niceMax(values) {
+  const peak = Math.max(0, ...values);
+  return Math.max(20, Math.ceil(peak / 20) * 20);
+}
 
 function DateChip({ text }) {
   return (
@@ -65,11 +66,13 @@ function StatCard({ title, value, cardBg, iconBg, Icon }) {
 }
 
 function BarChart({ data }) {
+  const max = niceMax(data.map((d) => d.value));
+  const yLabels = [max, max * 0.75, max * 0.5, max * 0.25, 0];
   return (
     <View>
       <View style={styles.chartRow}>
         <View style={styles.yAxis}>
-          {[20, 15, 10, 5, 0].map((v) => (
+          {yLabels.map((v) => (
             <Text key={v} style={styles.axisLabel}>
               {v}
             </Text>
@@ -82,8 +85,8 @@ function BarChart({ data }) {
           <View style={styles.bars}>
             {data.map((d) => (
               <View key={d.label} style={styles.barCol}>
-                <View style={[styles.bar, { height: (d.value / CHART_MAX) * CHART_HEIGHT }]}>
-                  <Text style={styles.barValue}>{d.value}</Text>
+                <View style={[styles.bar, { height: (d.value / max) * CHART_HEIGHT }]}>
+                  {d.value > 0 && <Text style={styles.barValue}>{d.value}</Text>}
                 </View>
               </View>
             ))}
@@ -115,11 +118,59 @@ function ActivityCard({ title, desc }) {
   );
 }
 
+function todayLabel() {
+  return new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function monthLabel() {
+  return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
 export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { nurseryName } = useSetup();
-  const { unreadCount } = useNotifications();
+  const { user } = useAuth();
+  const { nurseryName, logoUrl } = useData();
+  const { unreadCount, refreshUnreadCount } = useNotifications();
+
+  // Re-check the unread badge every time the home screen comes into focus
+  // (e.g. after reading/clearing notifications and navigating back).
+  useFocusEffect(
+    useCallback(() => {
+      refreshUnreadCount();
+    }, [refreshUnreadCount])
+  );
+
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await getDashboard();
+        if (active) setData(res);
+      } catch (_) {
+        // leave data null → cards show 0; screen still renders
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Chart data from the API; fall back to zeroed Sat..Thu while loading.
+  const attendance = (data?.weeklyAttendance ?? []).map((d) => ({
+    label: d.day,
+    value: d.present,
+  }));
+  const chartData = attendance.length
+    ? attendance
+    : ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu'].map((label) => ({ label, value: 0 }));
+
+  const statValue = (key, unit) => `${data?.[key] ?? 0} ${unit}`;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -137,9 +188,9 @@ export default function Home() {
             accessibilityRole="button"
             accessibilityLabel="Open profile"
           >
-            <Image source={avatar} style={styles.avatar} contentFit="cover" />
+            <AuthImage path={logoUrl} fallback={avatar} style={styles.avatar} />
             <View style={styles.profileText}>
-              <Text style={styles.name}>Hanna Calzoni</Text>
+              <Text style={styles.name}>{user?.fullName || 'Admin'}</Text>
               <Text style={styles.nursery}>{nurseryName || 'Nursery name'}</Text>
             </View>
           </Pressable>
@@ -162,16 +213,16 @@ export default function Home() {
         <View style={styles.section}>
           <View style={styles.sectionHead}>
             <Text style={styles.sectionTitle}>Overview</Text>
-            <DateChip text="April, 5, 2026" />
+            <DateChip text={todayLabel()} />
           </View>
           <View style={styles.statsGrid}>
             <View style={styles.statRow}>
-              <StatCard {...STATS[0]} />
-              <StatCard {...STATS[1]} />
+              <StatCard {...STATS[0]} value={statValue(STATS[0].key, STATS[0].unit)} />
+              <StatCard {...STATS[1]} value={statValue(STATS[1].key, STATS[1].unit)} />
             </View>
             <View style={styles.statRow}>
-              <StatCard {...STATS[2]} />
-              <StatCard {...STATS[3]} />
+              <StatCard {...STATS[2]} value={statValue(STATS[2].key, STATS[2].unit)} />
+              <StatCard {...STATS[3]} value={statValue(STATS[3].key, STATS[3].unit)} />
             </View>
           </View>
         </View>
@@ -180,9 +231,15 @@ export default function Home() {
         <View style={styles.section}>
           <View style={styles.sectionHead}>
             <Text style={styles.sectionTitle}>Daily Attendance</Text>
-            <DateChip text="April 2026" />
+            <DateChip text={monthLabel()} />
           </View>
-          <BarChart data={ATTENDANCE} />
+          {loading ? (
+            <View style={styles.chartLoading}>
+              <ActivityIndicator color={Colors.primary} />
+            </View>
+          ) : (
+            <BarChart data={chartData} />
+          )}
         </View>
 
         {/* Recent Activity */}
@@ -310,6 +367,7 @@ const styles = StyleSheet.create({
   statValue: { fontFamily: Fonts.medium, fontSize: 14, color: Colors.gray },
 
   // Bar chart
+  chartLoading: { height: CHART_HEIGHT + 24, alignItems: 'center', justifyContent: 'center' },
   chartRow: { flexDirection: 'row', height: CHART_HEIGHT + 4 },
   yAxis: {
     width: 26,

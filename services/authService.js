@@ -12,12 +12,61 @@ export function signIn(email, password) {
   });
 }
 
-export function signOut() {
-  return apiRequest('/auth/logout', { method: 'POST' });
+/**
+ * Sign out THIS device only. Pass the device's refresh token so the backend
+ * revokes just that session; other devices stay signed in.
+ */
+export function signOut(refreshToken) {
+  return apiRequest('/auth/logout', {
+    method: 'POST',
+    body: refreshToken ? { refreshToken } : undefined,
+  });
+}
+
+/** Sign out everywhere: revokes every refresh token for this user. */
+export function signOutAll() {
+  return apiRequest('/auth/logout-all', { method: 'POST' });
 }
 
 export function getProfile() {
   return apiRequest('/auth/me');
+}
+
+// ---- Password reset (OTP flow) ---------------------------------------------
+
+/**
+ * Start a reset. Throws with `status === 404` if the email isn't registered.
+ * On success returns { token, expiresInSeconds } — keep `token` for the next steps.
+ */
+export function forgotPassword(email) {
+  return apiRequest('/auth/forgot-password', { method: 'POST', body: { email } });
+}
+
+/** Verify the 4-digit OTP. Resolves on 204; throws (400) with a message if wrong/expired. */
+export function verifyResetOtp(token, otp) {
+  return apiRequest('/auth/verify-reset-otp', { method: 'POST', body: { token, otp } });
+}
+
+/** Resend a fresh OTP for the same reset session. Returns { token, expiresInSeconds }. */
+export function resendResetOtp(token) {
+  return apiRequest('/auth/resend-reset-otp', { method: 'POST', body: { token } });
+}
+
+/** Set the new password (after the OTP was verified). Resolves on 204. */
+export function resetPassword(token, newPassword) {
+  return apiRequest('/auth/reset-password', { method: 'POST', body: { token, newPassword } });
+}
+
+/**
+ * Change the logged-in user's password. Requires the current password.
+ * Resolves with no body (204). Throws with `status === 401` when the current
+ * password is wrong (or the new one equals it).
+ */
+export function changePassword(currentPassword, newPassword) {
+  return apiRequest('/auth/change-password', {
+    method: 'POST',
+    body: { currentPassword, newPassword },
+  });
 }
 
 // ---- Invitation flow (deep link) --------------------------------------------

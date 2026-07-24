@@ -1,8 +1,16 @@
-import { useState, useEffect } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Modal } from 'react-native';
-import { Image } from 'expo-image';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  Modal,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Search from '../../assets/icons/search.svg';
 import Plus from '../../assets/icons/plus.svg';
@@ -12,20 +20,36 @@ import RefreshIcon from '../../assets/icons/refresh-dark.svg';
 import ArchiveIcon from '../../assets/icons/archive.svg';
 import UnarchiveIcon from '../../assets/icons/unarchive.svg';
 import Calendar from '../../assets/icons/calendar.svg';
+import RoomIcon from '../../assets/icons/tab-rooms.svg';
 import BottomTabBar from '../../components/BottomTabBar';
+import AuthImage from '../../components/AuthImage';
 import AddRoomModal from '../../components/AddRoomModal';
 import EditRoomModal from '../../components/EditRoomModal';
 import ArchiveRoomModal from '../../components/ArchiveRoomModal';
 import ReassignFirstModal from '../../components/ReassignFirstModal';
 import RoomArchivedModal from '../../components/RoomArchivedModal';
 import SuccessModal from '../../components/SuccessModal';
-import { useRooms } from '../../context/RoomsContext';
+import ErrorModal from '../../components/ErrorModal';
+import {
+  getRooms,
+  createRoom,
+  uploadRoomImage,
+  assignTeacher,
+  archiveRoom as archiveRoomApi,
+  restoreRoom as restoreRoomApi,
+} from '../../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 export default function Rooms() {
   const router = useRouter();
   const { archived } = useLocalSearchParams();
-  const { rooms, archivedRooms, addRoom, archiveRoom, unarchiveRoom } = useRooms();
+
+  // Live rooms (active + archived) from the backend.
+  const [allRooms, setAllRooms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false); // archive/restore/create in flight
+
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState('active');
   const [showAdd, setShowAdd] = useState(false);
@@ -37,10 +61,35 @@ export default function Rooms() {
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [reassignTarget, setReassignTarget] = useState(null);
 
+  // Show the spinner only on the very first load; refocus refetches silently.
+  const loadedRef = useRef(false);
+
+  const load = useCallback(async () => {
+    if (!loadedRef.current) setLoading(true);
+    try {
+      const data = await getRooms(true); // include archived
+      setAllRooms(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load rooms.');
+    } finally {
+      loadedRef.current = true;
+      setLoading(false);
+    }
+  }, []);
+
+  // Refetch every time the screen gains focus (e.g. after assign/reassign).
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
   // The reassign screen returns here with ?archived=1 after it archives a room.
   useEffect(() => {
     if (archived === '1') {
       setNoticeKind('archived');
+      load();
       router.setParams({ archived: '' });
     }
   }, [archived]);
@@ -59,24 +108,40 @@ export default function Rooms() {
     setArchiveTarget(room);
   };
 
-  const confirmArchive = () => {
+  const confirmArchive = async () => {
     const room = archiveTarget;
     setArchiveTarget(null);
     if (!room) return;
     // A room with children must be emptied first — show the reassign guard;
     // otherwise archive it straight away.
-    if (room.childIds.length > 0) {
+    if ((room.childCount ?? 0) > 0) {
       setReassignTarget(room);
-    } else {
-      archiveRoom(room.id);
+      return;
+    }
+    setBusy(true);
+    try {
+      await archiveRoomApi(room.id);
+      await load();
       setNoticeKind('archived');
+    } catch (e) {
+      setError(e.message || 'Could not archive the room.');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleUnarchive = (room) => {
+  const handleUnarchive = async (room) => {
     closeMenu();
-    unarchiveRoom(room.id);
-    setNoticeKind('unarchived');
+    setBusy(true);
+    try {
+      await restoreRoomApi(room.id);
+      await load();
+      setNoticeKind('unarchived');
+    } catch (e) {
+      setError(e.message || 'Could not unarchive the room.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const goReassign = () => {
@@ -95,26 +160,51 @@ export default function Rooms() {
 
   const openSchedule = (room) => {
     closeMenu();
-    router.push({ pathname: '/room-schedule', params: { roomId: String(room.id) } });
+    router.push({
+      pathname: '/room-schedule',
+      params: { roomId: String(room.id), archived: room.archived ? '1' : '' },
+    });
   };
 
   const openRoom = (room) => {
     router.push({ pathname: '/room-detail', params: { roomId: String(room.id) } });
   };
 
+  // Split the single fetch into the two tabs.
+  const activeRooms = allRooms.filter((r) => !r.archived);
+  const archivedRooms = allRooms.filter((r) => r.archived);
+
   // The Active/Archived toggle only appears once something has been archived.
   const hasArchived = archivedRooms.length > 0;
   const activeTab = hasArchived ? tab : 'active';
-  const source = activeTab === 'archived' ? archivedRooms : rooms;
+  const source = activeTab === 'archived' ? archivedRooms : activeRooms;
 
   const filtered = source.filter((r) =>
-    r.name.toLowerCase().includes(query.trim().toLowerCase())
+    (r.name || '').toLowerCase().includes(query.trim().toLowerCase())
   );
 
-  const handleAddRoom = ({ name, image, teachers }) => {
-    const id = addRoom({ name, image, teachers });
-    setNewRoomId(id);
-    setShowSuccess(true);
+  const handleAddRoom = async ({ name, image, teacherIds = [] }) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // 1. Create the room (name only; capacity defaults to 20 on the backend).
+      const room = await createRoom({ name });
+      // 2. Upload the logo (mandatory in the form).
+      if (image) {
+        await uploadRoomImage(room.id, { uri: image });
+      }
+      // 3. Assign any selected teachers (optional). A room can have several.
+      for (const teacherId of teacherIds) {
+        await assignTeacher(room.id, teacherId).catch(() => {});
+      }
+      await load();
+      setNewRoomId(room.id);
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not create the room.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -168,31 +258,43 @@ export default function Rooms() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {filtered.length === 0 && (
-          <Text style={styles.noResults}>
-            {activeTab === 'archived' ? 'No archived rooms.' : 'No rooms found.'}
-          </Text>
+        {loading ? (
+          <ActivityIndicator style={{ marginTop: Spacing.lg }} color={Colors.primary} />
+        ) : (
+          <>
+            {filtered.length === 0 && (
+              <Text style={styles.noResults}>
+                {activeTab === 'archived' ? 'No archived rooms.' : 'No rooms found.'}
+              </Text>
+            )}
+            {filtered.map((room) => (
+              <Pressable key={room.id} style={styles.card} onPress={() => openRoom(room)}>
+                <View style={styles.cardLeft}>
+                  <View style={styles.avatar}>
+                    {room.imageUrl ? (
+                      <AuthImage path={room.imageUrl} style={styles.avatarImg} contentFit="cover" />
+                    ) : (
+                      <RoomIcon width={24} height={24} />
+                    )}
+                  </View>
+                  <View style={styles.cardText}>
+                    <Text style={styles.roomName}>{room.name}</Text>
+                    <Text style={styles.roomCount}>
+                      {room.childCount ?? 0} {(room.childCount ?? 0) === 1 ? 'Child' : 'Children'}
+                    </Text>
+                  </View>
+                </View>
+                <Pressable
+                  style={styles.moreBtn}
+                  hitSlop={8}
+                  onPress={(e) => openMenu(room, e.nativeEvent.pageY)}
+                >
+                  <MoreVertical width={24} height={24} />
+                </Pressable>
+              </Pressable>
+            ))}
+          </>
         )}
-        {filtered.map((room) => (
-          <Pressable key={room.id} style={styles.card} onPress={() => openRoom(room)}>
-            <View style={styles.cardLeft}>
-              <View style={styles.avatar}>
-                <Image source={room.img} style={styles.avatarImg} contentFit="contain" />
-              </View>
-              <View style={styles.cardText}>
-                <Text style={styles.roomName}>{room.name}</Text>
-                <Text style={styles.roomCount}>{room.childIds.length} Child</Text>
-              </View>
-            </View>
-            <Pressable
-              style={styles.moreBtn}
-              hitSlop={8}
-              onPress={(e) => openMenu(room, e.nativeEvent.pageY)}
-            >
-              <MoreVertical width={24} height={24} />
-            </Pressable>
-          </Pressable>
-        ))}
       </ScrollView>
 
       <BottomTabBar active="rooms" />
@@ -207,6 +309,11 @@ export default function Rooms() {
         visible={!!editRoom}
         room={editRoom}
         onClose={() => setEditRoom(null)}
+        onSaved={() => {
+          setEditRoom(null);
+          load();
+          setNoticeKind('updated');
+        }}
       />
 
       <ArchiveRoomModal
@@ -227,9 +334,19 @@ export default function Rooms() {
         title={
           noticeKind === 'unarchived'
             ? 'Room unarchived successfully!'
-            : 'Room Archived Successfully!'
+            : noticeKind === 'updated'
+              ? 'Room updated successfully!'
+              : 'Room Archived Successfully!'
         }
         onClose={() => setNoticeKind(null)}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        onClose={() => setError(null)}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
       />
 
       <SuccessModal
@@ -253,14 +370,16 @@ export default function Rooms() {
         <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu}>
           <View style={[styles.menu, { top: menu.top }]}>
             <Pressable
-              style={styles.menuItem}
+              style={[styles.menuItem, activeTab === 'archived' && styles.menuItemDisabled]}
+              disabled={activeTab === 'archived'}
               onPress={() => menu.room && handleEdit(menu.room)}
             >
               <EditIcon width={24} height={24} />
               <Text style={styles.menuLabel}>Edit Room</Text>
             </Pressable>
             <Pressable
-              style={styles.menuItem}
+              style={[styles.menuItem, activeTab === 'archived' && styles.menuItemDisabled]}
+              disabled={activeTab === 'archived'}
               onPress={() => menu.room && assignToRoom(menu.room)}
             >
               <RefreshIcon width={24} height={24} />
@@ -401,7 +520,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarImg: { width: 28, height: 28 },
+  avatarImg: { width: 40, height: 40, borderRadius: Radii.button },
   cardText: { gap: Spacing.xs },
   roomName: {
     fontFamily: Fonts.bold,
@@ -445,6 +564,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.sm,
   },
+  menuItemDisabled: { opacity: 0.4 },
   menuLabel: {
     fontFamily: Fonts.medium,
     fontWeight: '500',

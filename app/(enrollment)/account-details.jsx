@@ -1,36 +1,48 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Image } from 'expo-image';
+import { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import EditIcon from '../../assets/icons/edit-dark.svg';
 import Clock from '../../assets/icons/clock.svg';
 import StatusActive from '../../assets/icons/status-active.svg';
 import StatusExpired from '../../assets/icons/status-expired.svg';
+import AuthImage from '../../components/AuthImage';
 import ReassignTeacherModal from '../../components/ReassignTeacherModal';
 import DeleteChildModal from '../../components/DeleteChildModal';
 import LinkChildrenModal from '../../components/LinkChildrenModal';
-import { useEnrollment } from '../../context/EnrollmentContext';
-import { useRooms } from '../../context/RoomsContext';
+import RoomArchivedModal from '../../components/RoomArchivedModal';
+import ErrorModal from '../../components/ErrorModal';
+import { getStaffMember, deleteStaffMember } from '../../services/staffService';
+import { getParentMember, linkChildren, deleteParentMember } from '../../services/parentService';
+import {
+  getRooms,
+  getTeacherRooms,
+  assignTeacher,
+  unassignTeacher,
+} from '../../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-// Parse the stored "Sunflower, Daisy" rooms string into a list of names.
-const parseRooms = (str) =>
-  (str || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s && s.toLowerCase() !== 'all rooms');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const formatDate = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+};
+const mapStatus = (s) =>
+  s === 'PENDING' ? 'pending' : s === 'INVITATION_EXPIRED' ? 'expired' : 'active';
 
-const initialsOf = (name) =>
-  name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2);
+const initialsOf = (name = '') =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').slice(0, 2);
 
 function StatusBadge({ status }) {
   if (status === 'pending') {
@@ -60,45 +72,142 @@ function StatusBadge({ status }) {
 export default function AccountDetails() {
   const router = useRouter();
   const { id, tab = 'staff' } = useLocalSearchParams();
-  const { listFor, updateMember, removeMember } = useEnrollment();
-  const { rooms, enrolledChildren, deleteChild } = useRooms();
+  const isStaff = tab !== 'parents';
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [member, setMember] = useState(null);
+  const [roomNames, setRoomNames] = useState([]); // staff
+  const [assignedRoomIds, setAssignedRoomIds] = useState([]); // staff
+  const [linkedChildren, setLinkedChildren] = useState([]); // parents: [{ id, fullName, roomName }]
+
   const [showReassign, setShowReassign] = useState(false);
+  const [reassignRooms, setReassignRooms] = useState([]);
   const [showDelete, setShowDelete] = useState(false);
   const [showLink, setShowLink] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [successMsg, setSuccessMsg] = useState(null);
 
-  const member = listFor(tab).find((m) => String(m.id) === String(id));
-
-  // Rooms the member is currently in, matched to real room ids by name.
-  const currentRoomIds = member
-    ? rooms.filter((r) => parseRooms(member.rooms).includes(r.name)).map((r) => r.id)
-    : [];
-
-  const confirmReassign = (roomIds) => {
-    const names = rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
-    updateMember(tab, member.id, { rooms: names.join(', ') });
-    setShowReassign(false);
-  };
-
-  const confirmDelete = () => {
-    setShowDelete(false);
-    // Deleting a parent cascades: every linked child is removed from the
-    // nursery (all rooms + the enrolled pool) and from the Children list.
-    if (tab === 'parents') {
-      (member.linkedChildren || []).forEach((lc) => {
-        const child = enrolledChildren.find((c) => c.name === lc.name);
-        if (child) deleteChild(child.id);
-        const childMember = listFor('children').find((m) => m.name === lc.name);
-        if (childMember) removeMember('children', childMember.id);
-      });
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      if (isStaff) {
+        const [t, tRooms] = await Promise.all([
+          getStaffMember(id),
+          getTeacherRooms(id).catch(() => []),
+        ]);
+        setMember({
+          id: t.id,
+          name: t.fullName,
+          role: t.jobTitle || '',
+          status: mapStatus(t.status),
+          email: t.email,
+          imageUrl: t.imageUrl,
+          joined: formatDate(t.joinedAt),
+        });
+        setRoomNames((tRooms || []).map((r) => r.roomName));
+        setAssignedRoomIds((tRooms || []).map((r) => r.roomId));
+      } else {
+        const p = await getParentMember(id);
+        setMember({
+          id: p.id,
+          name: p.fullName,
+          role: p.relationship || '',
+          status: mapStatus(p.status),
+          email: p.email,
+          imageUrl: p.imageUrl,
+          joined: formatDate(p.joinedAt),
+        });
+        setLinkedChildren(p.children || []);
+      }
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the account.');
+    } finally {
+      setLoading(false);
     }
-    removeMember(tab, member.id); // fully removed from the enrollment list
-    goBack();
-  };
+  }, [id, isStaff]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/enrollment');
   };
+
+  const openReassign = async () => {
+    try {
+      const all = await getRooms(false);
+      setReassignRooms(all || []);
+      setShowReassign(true);
+    } catch (e) {
+      setError(e.message || 'Could not load rooms.');
+    }
+  };
+
+  const confirmReassign = async (selectedRoomIds) => {
+    setShowReassign(false);
+    try {
+      const sel = new Set(selectedRoomIds);
+      const origSet = new Set(assignedRoomIds);
+      for (const rid of selectedRoomIds) if (!origSet.has(rid)) await assignTeacher(rid, id);
+      for (const rid of assignedRoomIds) if (!sel.has(rid)) await unassignTeacher(rid, id);
+      await load();
+      setSuccessMsg('Teacher reassigned successfully!');
+    } catch (e) {
+      setError(e.message || 'Could not reassign the teacher.');
+    }
+  };
+
+  const confirmLink = async (childIds) => {
+    if (linking || !childIds.length) return;
+    setLinking(true);
+    try {
+      await linkChildren(id, childIds);
+      setShowLink(false);
+      await load(); // refresh linked children on the detail
+      setSuccessMsg('Children linked successfully!');
+    } catch (e) {
+      setError(e.message || 'Could not link the children.');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    setShowDelete(false);
+    if (busy) return;
+    setBusy(true);
+    try {
+      await (isStaff ? deleteStaffMember(id) : deleteParentMember(id));
+      goBack(); // enrollment refetches on focus → returns to Staff/Parents tab, refreshed
+    } catch (e) {
+      setError(e.message || `Could not delete the ${isStaff ? 'teacher' : 'parent'}.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
+            <ArrowLeft width={24} height={24} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Account Details</Text>
+        </View>
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      </SafeAreaView>
+    );
+  }
 
   if (!member) {
     return (
@@ -115,31 +224,27 @@ export default function AccountDetails() {
     );
   }
 
-  const isParent = tab === 'parents';
-  const linkedChildren = member.linkedChildren || [];
-
-  const rows = isParent
+  const rows = isStaff
     ? [
         { label: 'Email:', value: member.email || '—' },
         { label: 'Role:', value: member.role || '—' },
-        {
-          label: 'Linked Children:',
-          value: linkedChildren.map((c) => c.name).join(', ') || '—',
-        },
-        { label: 'Joined:', value: member.joined || '—' },
+        { label: 'Rooms:', value: roomNames.length ? roomNames.join(', ') : '—' },
+        { label: 'Joined:', value: member.joined },
       ]
     : [
         { label: 'Email:', value: member.email || '—' },
         { label: 'Role:', value: member.role || '—' },
-        { label: 'Rooms:', value: member.rooms || '—' },
-        { label: 'Joined:', value: member.joined || '—' },
+        {
+          label: 'Linked Children:',
+          value: linkedChildren.map((c) => c.fullName).join(', ') || '—',
+        },
+        { label: 'Joined:', value: member.joined },
       ];
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
 
-      {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8}>
           <ArrowLeft width={24} height={24} />
@@ -147,23 +252,15 @@ export default function AccountDetails() {
         <Text style={styles.headerTitle}>Account Details</Text>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Profile card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarWrap}>
-            {member.avatar ? (
-              <Image source={member.avatar} style={styles.avatar} contentFit="cover" />
+            {member.imageUrl ? (
+              <AuthImage path={member.imageUrl} style={styles.avatar} contentFit="cover" />
             ) : (
               <View style={styles.avatarFallback}>
                 <Text style={styles.avatarInitials}>{initialsOf(member.name)}</Text>
-              </View>
-            )}
-            {!isParent && (
-              <View style={styles.avatarEdit}>
-                <EditIcon width={20} height={20} />
               </View>
             )}
           </View>
@@ -180,31 +277,25 @@ export default function AccountDetails() {
         <Text style={styles.sectionLabel}>Account Info</Text>
         <View style={styles.infoCard}>
           {rows.map((r, i) => (
-            <View
-              key={r.label}
-              style={[styles.infoRow, i < rows.length - 1 && styles.infoRowDivider]}
-            >
+            <View key={r.label} style={[styles.infoRow, i < rows.length - 1 && styles.infoRowDivider]}>
               <Text style={styles.infoKey}>{r.label}</Text>
               <Text style={styles.infoValue}>{r.value}</Text>
             </View>
           ))}
         </View>
 
-        {/* Linked children (parents only) */}
-        {isParent && linkedChildren.length > 0 && (
+        {/* Linked children (parents) */}
+        {!isStaff && linkedChildren.length > 0 && (
           <>
             <Text style={styles.sectionLabel}>Linked Children</Text>
             <View style={styles.infoCard}>
               {linkedChildren.map((c, i) => (
                 <View
-                  key={`${c.name}-${i}`}
-                  style={[
-                    styles.linkedRow,
-                    i < linkedChildren.length - 1 && styles.infoRowDivider,
-                  ]}
+                  key={c.id}
+                  style={[styles.linkedRow, i < linkedChildren.length - 1 && styles.infoRowDivider]}
                 >
                   <Text style={styles.linkedText}>
-                    {c.name}, {c.room}
+                    {c.fullName}{c.roomName ? `, ${c.roomName}` : ''}
                   </Text>
                 </View>
               ))}
@@ -218,10 +309,14 @@ export default function AccountDetails() {
         <Pressable
           style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
           onPress={() =>
-            router.push({
-              pathname: isParent ? '/edit-parent' : '/edit-account',
-              params: { id: String(member.id), tab },
-            })
+            router.push(
+              isStaff
+                ? {
+                    pathname: '/edit-teacher',
+                    params: { teacherId: String(id), title: 'Edit Account Info' },
+                  }
+                : { pathname: '/edit-parent', params: { id: String(id), tab } }
+            )
           }
         >
           <Text style={styles.primaryText}>Edit Account Info</Text>
@@ -235,45 +330,57 @@ export default function AccountDetails() {
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.reassignBtn, pressed && styles.pressed]}
-            onPress={() => (isParent ? setShowLink(true) : setShowReassign(true))}
+            onPress={isStaff ? openReassign : () => setShowLink(true)}
           >
-            <Text style={styles.reassignText}>{isParent ? 'Link Children' : 'Reassign'}</Text>
+            <Text style={styles.reassignText}>{isStaff ? 'Reassign' : 'Link Children'}</Text>
           </Pressable>
         </View>
       </View>
 
-      {!isParent && (
+      {isStaff && (
         <ReassignTeacherModal
           visible={showReassign}
-          rooms={rooms}
-          initialSelected={currentRoomIds}
+          rooms={reassignRooms}
+          initialSelected={assignedRoomIds}
           onClose={() => setShowReassign(false)}
           onConfirm={confirmReassign}
         />
       )}
 
-      {isParent && (
+      {!isStaff && (
         <LinkChildrenModal
           visible={showLink}
-          initialLinked={linkedChildren}
+          parentId={id}
+          submitting={linking}
           onClose={() => setShowLink(false)}
-          onConfirm={(linked) => {
-            updateMember(tab, member.id, { linkedChildren: linked });
-            setShowLink(false);
-          }}
+          onConfirm={confirmLink}
         />
       )}
 
       <DeleteChildModal
         visible={showDelete}
-        title={isParent ? 'Delete Parent?' : 'Delete Teacher?'}
+        title={isStaff ? 'Delete Teacher?' : 'Delete Parent?'}
         message={
-          isParent
-            ? 'Are you sure you want to delete this parent account? This action cannot be undone, and all linked child associations will be removed.'
-            : 'Are you sure you want to delete this teacher account? This action cannot be undone.'
+          isStaff
+            ? 'Are you sure you want to delete this teacher account? This action cannot be undone.'
+            : 'Are you sure you want to delete this parent account? This action cannot be undone, and all linked child associations will be removed.'
         }
         onCancel={() => setShowDelete(false)}
         onConfirm={confirmDelete}
+      />
+
+      <RoomArchivedModal
+        visible={!!successMsg}
+        title={successMsg || ''}
+        onClose={() => setSuccessMsg(null)}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -320,23 +427,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarInitials: {
-    fontFamily: Fonts.bold,
-    fontWeight: '600',
-    fontSize: 36,
-    color: Colors.primaryText,
-  },
-  avatarEdit: {
-    position: 'absolute',
-    right: -4,
-    bottom: -4,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F2F2F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  avatarInitials: { fontFamily: Fonts.bold, fontWeight: '600', fontSize: 36, color: Colors.primaryText },
   profileText: { alignItems: 'center', gap: Spacing.xs },
   name: { fontFamily: Fonts.bold, fontWeight: '600', fontSize: 16, color: Colors.textBlack },
   role: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.gray },
@@ -384,12 +475,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   linkedRow: { width: '100%' },
-  linkedText: {
-    fontFamily: Fonts.medium,
-    fontWeight: '500',
-    fontSize: 14,
-    color: Colors.textBlack,
-  },
+  linkedText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.textBlack },
 
   footer: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, gap: Spacing.md },
   primaryBtn: {

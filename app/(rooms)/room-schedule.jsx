@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -11,7 +18,15 @@ import Trash from '../../assets/icons/trash.svg';
 import AddSessionModal from '../../components/AddSessionModal';
 import RoomArchivedModal from '../../components/RoomArchivedModal';
 import DeleteSessionModal from '../../components/DeleteSessionModal';
-import { useRooms } from '../../context/RoomsContext';
+import ErrorModal from '../../components/ErrorModal';
+import {
+  getSessions,
+  createSession,
+  updateSession,
+  deleteSession,
+  to12h,
+  to24h,
+} from '../../services/sessionService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const noSchedule = require('../../assets/images/no-schedule.png');
@@ -22,7 +37,8 @@ const MONTHS = [
 ];
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const DAY_W = 48; // approx chip width + gap, for auto-scroll
-const dateKey = (y, m, d) => `${y}-${m}-${d}`;
+const pad = (n) => String(n).padStart(2, '0');
+const dateStrOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
 
 const initials = (name = '') =>
   name
@@ -42,7 +58,7 @@ function SessionCard({ session, onRequestEdit, onRequestDelete }) {
           <View style={styles.timeRow}>
             <Clock width={16} height={16} />
             <Text style={styles.timeText}>
-              {session.from} - {session.to}
+              {to12h(session.startTime)} - {to12h(session.endTime)}
             </Text>
           </View>
         </View>
@@ -55,15 +71,11 @@ function SessionCard({ session, onRequestEdit, onRequestDelete }) {
           </Pressable>
         </View>
       </View>
-      <View style={styles.teacherList}>
-        {(session.teachers || []).map((t) => (
-          <View key={t} style={styles.teacherRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(t)}</Text>
-            </View>
-            <Text style={styles.teacherName}>Ms. {t}</Text>
-          </View>
-        ))}
+      <View style={styles.teacherRow}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials(session.teacherName)}</Text>
+        </View>
+        <Text style={styles.teacherName}>{session.teacherName}</Text>
       </View>
     </View>
   );
@@ -71,23 +83,49 @@ function SessionCard({ session, onRequestEdit, onRequestDelete }) {
 
 export default function RoomSchedule() {
   const router = useRouter();
-  const { roomId } = useLocalSearchParams();
-  const { sessions, addSession, removeSession, updateSession } = useRooms();
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(2); // March
-  const [selectedDay, setSelectedDay] = useState(21);
+  const { roomId, archived } = useLocalSearchParams();
+  const isArchived = archived === '1'; // archived rooms can't add sessions
+
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
+  const [selectedDay, setSelectedDay] = useState(today.getDate());
+
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
   const [showAdd, setShowAdd] = useState(false);
-  const [editSession, setEditSession] = useState(null);
+  const [editSession, setEditSession] = useState(null); // raw session being edited
+  const [submitting, setSubmitting] = useState(false);
   const [successText, setSuccessText] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
-  const [deleteId, setDeleteId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const stripRef = useRef(null);
 
-  const rid = Number(roomId);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-  const key = dateKey(year, month, selectedDay);
-  const daySessions = (sessions[rid] || []).filter((s) => s.date === key);
+  const dateStr = dateStrOf(year, month, selectedDay);
+
+  const load = useCallback(async () => {
+    if (!roomId) return;
+    setLoading(true);
+    try {
+      const data = await getSessions(roomId, dateStr);
+      setSessions(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load the schedule.');
+    } finally {
+      setLoading(false);
+    }
+  }, [roomId, dateStr]);
+
+  // Refetch whenever the selected day changes.
+  useEffect(() => {
+    load();
+  }, [load]);
 
   // Keep the selected day in view when the month changes.
   useEffect(() => {
@@ -112,17 +150,63 @@ export default function RoomSchedule() {
     setEditSession(null);
   };
 
-  const handleSubmitSession = (values) => {
-    if (editSession) {
-      updateSession(rid, editSession.id, values);
-      setSuccessText('Session edited successfully!');
-    } else {
-      addSession(rid, { ...values, date: key });
-      setSuccessText('Session added successfully!');
+  // Values from the modal: { name, teacherId, from, to } (from/to are "hh:mm AM/PM").
+  const handleSubmitSession = async (values) => {
+    if (submitting) return;
+    const startTime = to24h(values.from);
+    const endTime = to24h(values.to);
+    const body = {
+      name: values.name,
+      teacherId: values.teacherId,
+      date: dateStr,
+      startTime,
+      endTime,
+    };
+    setSubmitting(true);
+    try {
+      if (editSession) {
+        await updateSession(roomId, editSession.id, body);
+        setSuccessText('Session updated successfully!');
+      } else {
+        await createSession(roomId, body);
+        setSuccessText('Session added successfully!');
+      }
+      closeModal();
+      await load();
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not save the session.');
+    } finally {
+      setSubmitting(false);
     }
-    closeModal();
-    setShowSuccess(true);
   };
+
+  const confirmDelete = async () => {
+    const target = deleteTarget;
+    if (!target || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteSession(roomId, target.id);
+      setDeleteTarget(null);
+      await load();
+      setSuccessText('Session deleted successfully!');
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not delete the session.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Map the raw session to the shape the modal expects (display times).
+  const editValues = editSession
+    ? {
+        name: editSession.name,
+        teacherId: editSession.teacherId,
+        from: to12h(editSession.startTime),
+        to: to12h(editSession.endTime),
+      }
+    : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -176,8 +260,10 @@ export default function RoomSchedule() {
         </ScrollView>
       </View>
 
-      {/* Sessions or empty state */}
-      {daySessions.length === 0 ? (
+      {/* Sessions / loading / empty */}
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      ) : sessions.length === 0 ? (
         <View style={styles.empty}>
           <Image source={noSchedule} style={styles.illustration} contentFit="contain" />
           <View style={styles.emptyText}>
@@ -194,23 +280,28 @@ export default function RoomSchedule() {
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.count}>
-            {daySessions.length} Session{daySessions.length > 1 ? 's' : ''} for today.
+            {sessions.length} Session{sessions.length > 1 ? 's' : ''} for this day.
           </Text>
-          {daySessions.map((s) => (
+          {sessions.map((s) => (
             <SessionCard
               key={s.id}
               session={s}
               onRequestEdit={() => setEditSession(s)}
-              onRequestDelete={() => setDeleteId(s.id)}
+              onRequestDelete={() => setDeleteTarget(s)}
             />
           ))}
         </ScrollView>
       )}
 
-      {/* Footer CTA */}
+      {/* Footer CTA — disabled for archived rooms */}
       <View style={styles.footer}>
         <Pressable
-          style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.cta,
+            isArchived && styles.ctaDisabled,
+            pressed && !isArchived && styles.pressed,
+          ]}
+          disabled={isArchived}
           onPress={() => setShowAdd(true)}
         >
           <Text style={styles.ctaText}>Add Sessions</Text>
@@ -219,7 +310,8 @@ export default function RoomSchedule() {
 
       <AddSessionModal
         visible={showAdd || !!editSession}
-        session={editSession}
+        session={editValues}
+        submitting={submitting}
         onClose={closeModal}
         onAdd={handleSubmitSession}
       />
@@ -231,12 +323,17 @@ export default function RoomSchedule() {
       />
 
       <DeleteSessionModal
-        visible={deleteId != null}
-        onCancel={() => setDeleteId(null)}
-        onConfirm={() => {
-          removeSession(rid, deleteId);
-          setDeleteId(null);
-        }}
+        visible={deleteTarget != null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -363,7 +460,6 @@ const styles = StyleSheet.create({
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   timeText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.gray },
   sessionActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  teacherList: { width: '100%', gap: Spacing.sm },
   teacherRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   avatar: {
     width: 24,
@@ -390,6 +486,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  ctaDisabled: { backgroundColor: Colors.disabledButton },
   pressed: { opacity: 0.85 },
   ctaText: {
     fontFamily: Fonts.bold,

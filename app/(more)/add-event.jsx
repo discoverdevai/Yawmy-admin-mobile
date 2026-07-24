@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -11,140 +19,173 @@ import Calendar from '../../assets/icons/calendar.svg';
 import Clock from '../../assets/icons/clock.svg';
 import ChevronDown from '../../assets/icons/chevron-down.svg';
 import CheckWhite from '../../assets/icons/check-white.svg';
-import FileDoc from '../../assets/icons/file-doc.svg';
 import Trash from '../../assets/icons/trash.svg';
+import AuthImage from '../../components/AuthImage';
 import DatePickerModal from '../../components/DatePickerModal';
 import TimePickerModal from '../../components/TimePickerModal';
 import SuccessModal from '../../components/SuccessModal';
-import { useEvents } from '../../context/EventsContext';
+import ErrorModal from '../../components/ErrorModal';
+import { getEvent, submitEventCreate, submitEventUpdate } from '../../services/eventService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-const EVENT_TYPES = ['Holiday', 'Parent Meeting', 'Activity', 'Celebration', 'Trip'];
-
-// Media the upload accepts: images, mp4 video, pdf and word documents.
-const ACCEPTED_TYPES = [
-  'image/jpeg',
-  'image/png',
-  'video/mp4',
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+// The two event types offered for now (more can be added later).
+const TYPE_OPTIONS = [
+  { label: 'Holiday', value: 'HOLIDAY' },
+  { label: 'Parent Meeting', value: 'PARENT_TEACHER_MEETING' },
 ];
+const typeLabel = (v) => TYPE_OPTIONS.find((o) => o.value === v)?.label || '';
 
-const fallbackImage = require('../../assets/images/rooms/sunshine.png');
-const MONTHS_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// Turn "30 Mar 2024" + "10:30 PM" into the list card's "Mar 30- 10:30 PM".
-const toCardDate = (d, t) => {
-  const m = /^(\d{1,2})\s+([A-Za-z]{3})\s+\d{4}$/.exec(d || '');
-  const datePart = m ? `${m[2]} ${Number(m[1])}` : d;
-  return `${datePart}- ${t}`;
+// "30 Mar 2024" -> "2024-03-30"
+const toISODate = (s) => {
+  const m = /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/.exec((s || '').trim());
+  if (!m) return null;
+  const mon = MONTHS.findIndex((x) => x.toLowerCase() === m[2].toLowerCase());
+  if (mon < 0) return null;
+  return `${m[3]}-${String(mon + 1).padStart(2, '0')}-${String(Number(m[1])).padStart(2, '0')}`;
 };
-
-// Split a card date "Mar 30- 10:30 PM" back into { date: "30 Mar YYYY", time }.
-const fromCardDate = (s) => {
-  const m = /^([A-Za-z]{3})\s+(\d{1,2})\s*-\s*(\d{1,2}:\d{2}\s*(AM|PM))/i.exec(s || '');
-  if (!m) return { date: null, time: null };
-  const year = new Date().getFullYear();
-  return {
-    date: `${String(Number(m[2])).padStart(2, '0')} ${m[1]} ${year}`,
-    time: m[3].toUpperCase().replace(/\s+/, ' '),
-  };
+// "10:30 PM" -> "22:30:00"
+const to24Time = (s) => {
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((s || '').trim());
+  if (!m) return null;
+  let h = Number(m[1]) % 12;
+  if (/pm/i.test(m[3])) h += 12;
+  return `${String(h).padStart(2, '0')}:${m[2]}:00`;
 };
-
-// Represent a saved event image as an editable media item.
-const buildImageMedia = (image) => {
-  if (!image) return [];
-  if (typeof image === 'object' && image.uri) {
-    return [{ key: 'img-0', name: 'Event image', uri: image.uri, mimeType: 'image/png' }];
-  }
-  return [{ key: 'img-0', name: 'Event image', source: image, mimeType: 'image/png' }];
+// "2024-03-30" -> "30 Mar 2024"
+const toDisplayDate = (s) => {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return m ? `${String(d).padStart(2, '0')} ${MONTHS[m - 1]} ${y}` : null;
+};
+// "22:30:00" -> "10:30 PM"
+const toDisplayTime = (s) => {
+  if (!s) return null;
+  const [hh, mm] = s.split(':').map(Number);
+  if (Number.isNaN(hh)) return null;
+  const period = hh < 12 ? 'AM' : 'PM';
+  return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${period}`;
 };
 
 export default function AddEvent() {
   const router = useRouter();
-  const { addEvent, updateEvent, events } = useEvents();
   const { id } = useLocalSearchParams();
+  const editing = !!id;
 
-  // When an id is supplied we are editing an existing event.
-  const editEvent = id ? events.find((e) => e.id === id) : null;
-  const editing = !!editEvent;
-  const initDateTime = editEvent ? fromCardDate(editEvent.date) : { date: null, time: null };
-
-  const [media, setMedia] = useState(() => (editEvent ? buildImageMedia(editEvent.image) : [])); // [{ key, name, uri?, source?, mimeType }]
-  const [name, setName] = useState(editEvent?.title || '');
-  const [type, setType] = useState(editEvent?.category || null);
+  const [loading, setLoading] = useState(editing);
+  const [image, setImage] = useState(null); // { uri, name, mimeType } (new) | { existingUrl } (edit)
+  const [name, setName] = useState('');
+  const [type, setType] = useState(null); // enum value
   const [typeOpen, setTypeOpen] = useState(false);
-  const [description, setDescription] = useState(editEvent?.desc || '');
-  const [date, setDate] = useState(initDateTime.date); // "DD MMM YYYY"
-  const [time, setTime] = useState(initDateTime.time); // "HH:MM AM/PM"
+  const [description, setDescription] = useState('');
+  const [date, setDate] = useState(null); // "DD MMM YYYY"
+  const [time, setTime] = useState(null); // "HH:MM AM/PM"
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
   const [showDate, setShowDate] = useState(false);
   const [showTime, setShowTime] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Auto-dismiss the success popup and return to the events list.
+  // Load the event when editing.
   useEffect(() => {
-    if (!showSuccess) return;
-    const t = setTimeout(() => router.dismissTo('/events'), 2000);
-    return () => clearTimeout(t);
-  }, [showSuccess, router]);
+    if (!editing) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const e = await getEvent(id);
+        if (cancelled) return;
+        setName(e.title || '');
+        setType(e.eventType || null);
+        setDescription(e.description || '');
+        setDate(toDisplayDate(e.eventDate));
+        setTime(toDisplayTime(e.eventTime));
+        setImage(e.imageUrl ? { existingUrl: e.imageUrl } : null);
+      } catch (e) {
+        if (!cancelled) setError(e.message || 'Could not load the event.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, id]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/events');
   };
 
-  // Open the system picker (gallery + files) for the accepted media types.
-  const pickMedia = async () => {
+  // Pick a single image.
+  const pickImage = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ACCEPTED_TYPES,
-      multiple: true,
+      type: IMAGE_TYPES,
+      multiple: false,
       copyToCacheDirectory: true,
     });
     if (result.canceled) return;
-    const picked = result.assets.map((a) => ({ key: a.uri, name: a.name, uri: a.uri, mimeType: a.mimeType }));
-    setMedia((cur) => [...cur, ...picked]);
+    const a = result.assets[0];
+    setImage({ uri: a.uri, name: a.name, mimeType: a.mimeType });
   };
 
-  const removeMedia = (key) => setMedia((cur) => cur.filter((m) => m.key !== key));
+  const valid = !!image && name.trim() && type && description.trim() && date && time;
 
-  const valid = media.length > 0 && name.trim() && type && description.trim() && date && time;
-
-  // The banner image value (handles picked URIs and prefilled local requires).
-  const bannerImage = () => {
-    const first = media.find((m) => (m.mimeType || '').startsWith('image/'));
-    if (!first) return fallbackImage;
-    return first.uri ? { uri: first.uri } : first.source ?? fallbackImage;
+  const publish = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        eventType: type,
+        title: name.trim(),
+        description: description.trim(),
+        eventDate: toISODate(date),
+        eventTime: to24Time(time),
+        image: image?.uri ? image : null,
+      };
+      if (editing) await submitEventUpdate(id, payload);
+      else await submitEventCreate(payload);
+      setShowSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Could not publish the event.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const publish = () => {
-    if (!valid) return;
-    const event = {
-      category: type,
-      title: name.trim(),
-      desc: description.trim(),
-      location: 'At Nursery',
-      date: toCardDate(date, time),
-      image: bannerImage(),
-    };
-    if (editing) updateEvent(id, event);
-    else addEvent(event);
-    setShowSuccess(true);
-  };
+  // Auto-dismiss the success popup and return to the events list.
+  useEffect(() => {
+    if (!showSuccess) return;
+    const t = setTimeout(() => router.dismissTo('/events'), 1600);
+    return () => clearTimeout(t);
+  }, [showSuccess, router]);
 
   // Open the preview screen with everything entered so far.
   const preview = () => {
+    const isoDate = toISODate(date);
     const data = {
       id: editing ? id : null,
-      category: type,
+      editing,
+      eventType: type,
       title: name.trim(),
-      desc: description.trim(),
-      location: 'At Nursery',
-      date: date && time ? toCardDate(date, time) : '',
-      image: media.length ? bannerImage() : null,
+      description: description.trim(),
+      eventDate: isoDate,
+      eventTime: to24Time(time),
+      image,
     };
     router.push({ pathname: '/event-preview', params: { data: JSON.stringify(data) } });
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -159,45 +200,29 @@ export default function AddEvent() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Event media */}
+        {/* Event image (one only) */}
         <View style={styles.field}>
           <Text style={styles.label}>Event Image</Text>
-          <Pressable style={styles.upload} onPress={pickMedia}>
+          <Pressable style={styles.upload} onPress={pickImage}>
             <Upload width={24} height={24} />
             <Text style={styles.uploadText}>Tap to upload your media</Text>
-            <Text style={styles.uploadHint}>(JPG, PNG, MP4, PDF, Word)</Text>
+            <Text style={styles.uploadHint}>(JPG, PNG)</Text>
           </Pressable>
 
-          {/* Image previews — each with a delete badge */}
-          {media.some((m) => (m.mimeType || '').startsWith('image/')) && (
+          {!!image && (
             <View style={styles.thumbWrap}>
-              {media
-                .filter((m) => (m.mimeType || '').startsWith('image/'))
-                .map((m) => (
-                  <View key={m.key} style={styles.thumb}>
-                    <Image source={m.source ?? { uri: m.uri }} style={styles.thumbImg} contentFit="cover" />
-                    <Pressable style={styles.thumbDelete} onPress={() => removeMedia(m.key)} hitSlop={6}>
-                      <Trash width={18} height={18} />
-                    </Pressable>
-                  </View>
-                ))}
-            </View>
-          )}
-
-          {/* Documents / videos — chip with a delete icon */}
-          {media
-            .filter((m) => !(m.mimeType || '').startsWith('image/'))
-            .map((m) => (
-              <View key={m.key} style={styles.fileChip}>
-                <FileDoc width={24} height={24} />
-                <Text style={styles.fileName} numberOfLines={1}>
-                  {m.name}
-                </Text>
-                <Pressable hitSlop={8} onPress={() => removeMedia(m.key)}>
-                  <Trash width={20} height={20} />
+              <View style={styles.thumb}>
+                {image.existingUrl ? (
+                  <AuthImage path={image.existingUrl} style={styles.thumbImg} contentFit="cover" />
+                ) : (
+                  <Image source={{ uri: image.uri }} style={styles.thumbImg} contentFit="cover" />
+                )}
+                <Pressable style={styles.thumbDelete} onPress={() => setImage(null)} hitSlop={6}>
+                  <Trash width={18} height={18} />
                 </Pressable>
               </View>
-            ))}
+            </View>
+          )}
         </View>
 
         {/* Event name */}
@@ -214,22 +239,29 @@ export default function AddEvent() {
           </View>
         </View>
 
-        {/* Event type — single-select checkbox dropdown */}
+        {/* Event type — single-select dropdown (2 options) */}
         <View style={styles.field}>
           <Text style={styles.label}>Event Type</Text>
           <Pressable style={styles.selectBox} onPress={() => setTypeOpen((o) => !o)}>
             <Text style={[styles.selectText, !type && styles.selectPlaceholder]}>
-              {type || 'Select event type'}
+              {type ? typeLabel(type) : 'Select event type'}
             </Text>
             <ChevronDown width={24} height={24} style={typeOpen ? styles.chevronUp : undefined} />
           </Pressable>
           {typeOpen && (
             <View style={styles.dropdown}>
-              {EVENT_TYPES.map((t) => {
-                const on = type === t;
+              {TYPE_OPTIONS.map((opt) => {
+                const on = type === opt.value;
                 return (
-                  <Pressable key={t} style={styles.dropdownItem} onPress={() => setType(t)}>
-                    <Text style={[styles.dropdownText, on && styles.dropdownTextOn]}>{t}</Text>
+                  <Pressable
+                    key={opt.value}
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      setType(opt.value);
+                      setTypeOpen(false);
+                    }}
+                  >
+                    <Text style={[styles.dropdownText, on && styles.dropdownTextOn]}>{opt.label}</Text>
                     <View style={[styles.checkbox, on && styles.checkboxOn]}>
                       {on && <CheckWhite width={14} height={14} />}
                     </View>
@@ -281,8 +313,12 @@ export default function AddEvent() {
 
       {/* Footer */}
       <View style={styles.footer}>
-        <Pressable style={[styles.cta, !valid && styles.ctaDisabled]} onPress={publish} disabled={!valid}>
-          <Text style={styles.ctaText}>Publish</Text>
+        <Pressable
+          style={[styles.cta, (!valid || submitting) && styles.ctaDisabled]}
+          onPress={publish}
+          disabled={!valid || submitting}
+        >
+          {submitting ? <ActivityIndicator color={Colors.white} /> : <Text style={styles.ctaText}>Publish</Text>}
         </Pressable>
         <Pressable style={styles.ctaOutline} onPress={preview}>
           <Text style={styles.ctaOutlineText}>Preview</Text>
@@ -309,9 +345,17 @@ export default function AddEvent() {
 
       <SuccessModal
         visible={showSuccess}
-        title={editing ? 'Event Updated Successfully!' : 'Event Shared Successfully!'}
+        title="Event Shared Successfully!"
         message=""
         buttonText=""
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -362,18 +406,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fileChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    height: 48,
-    borderWidth: 1,
-    borderColor: Colors.stroke,
-    borderRadius: Radii.md,
-    paddingHorizontal: Spacing.sm + 4,
-    backgroundColor: Colors.secBg,
-  },
-  fileName: { flex: 1, fontFamily: Fonts.regular, fontSize: 13, color: Colors.textBlack },
 
   inputBox: {
     height: 48,

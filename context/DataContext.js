@@ -1,21 +1,51 @@
-import { createContext, useContext, useCallback } from 'react';
+import { createContext, useContext, useCallback, useEffect, useState } from 'react';
+import { useAuth } from './AuthContext';
+import { getNursery } from '../services/nurseryService';
 
 const DataContext = createContext(null);
 
 /**
  * App-wide data store for things that aren't auth-related.
- * Add new domains (children, staff, classes, attendance, etc.) here as the
- * app grows.
+ * Currently holds the current admin's nursery (name + logo) so any screen
+ * (home header, profile, …) can read it without re-fetching.
  */
 export function DataProvider({ children }) {
-  /** Clear all cached data — call from signOut. */
+  const { isAuthenticated } = useAuth();
+  const [nursery, setNursery] = useState(null);
+  const [loadingNursery, setLoadingNursery] = useState(false);
+
+  const refreshNursery = useCallback(async () => {
+    setLoadingNursery(true);
+    try {
+      const n = await getNursery();
+      setNursery(n);
+      return n;
+    } finally {
+      setLoadingNursery(false);
+    }
+  }, []);
+
+  // Load the nursery when the session becomes authenticated; clear on logout.
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshNursery().catch(() => {});
+    } else {
+      setNursery(null);
+    }
+  }, [isAuthenticated, refreshNursery]);
+
   const clearData = useCallback(() => {
-    // reset cached domains here as they are added
+    setNursery(null);
   }, []);
 
   return (
     <DataContext.Provider
       value={{
+        nursery,
+        nurseryName: nursery?.name || '',
+        logoUrl: nursery?.logoUrl || null,
+        loadingNursery,
+        refreshNursery,
         clearData,
       }}
     >

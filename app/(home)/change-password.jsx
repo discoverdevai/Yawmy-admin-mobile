@@ -20,7 +20,8 @@ import PasswordInput from '../../components/PasswordInput';
 import ErrorModal from '../../components/ErrorModal';
 import SignOutModal from '../../components/SignOutModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
-import { DUMMY_USER, setUserPassword } from '../../constants/dummyUser';
+import { useAuth } from '../../context/AuthContext';
+import { changePassword } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const likeImage = require('../../assets/images/success-like.png');
@@ -34,8 +35,10 @@ export default function ChangePassword() {
   const [newPass, setNewPass] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
-  const [showWrong, setShowWrong] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
+  const { signOutAll } = useAuth();
   const keyboardHeight = useKeyboardHeight();
   const navTimer = useRef(null);
   const scrollRef = useRef(null);
@@ -65,36 +68,55 @@ export default function ChangePassword() {
 
   const showMismatch = confirm.length > 0 && newPass !== confirm;
   const canSubmit =
-    current.length > 0 && newPass.length >= MIN_LENGTH && newPass === confirm;
+    current.length > 0 &&
+    newPass.length >= MIN_LENGTH &&
+    newPass === confirm &&
+    !submitting;
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/security');
   };
 
-  const handleChange = () => {
+  const handleChange = async () => {
     if (!canSubmit) return;
-    if (current !== DUMMY_USER.password) {
-      setShowWrong(true); // failed: wrong current password
-      return;
+    setSubmitting(true);
+    try {
+      await changePassword(current, newPass);
+      // Success → show the popup, then auto-return.
+      setShowSuccess(true);
+      navTimer.current = setTimeout(() => {
+        setShowSuccess(false);
+        goBack();
+      }, 1800);
+    } catch (e) {
+      // 401 = current password wrong, or new password same as the current one.
+      if (e.status === 401) {
+        setNotice({
+          title: 'Failed to Set Password',
+          message: 'Your current password is incorrect. Please try again.',
+          resetCurrent: true,
+        });
+      } else {
+        setNotice({
+          title: 'Could not change password',
+          message: e.message || 'Something went wrong. Please try again.',
+        });
+      }
+    } finally {
+      setSubmitting(false);
     }
-    // Correct → save the new password, show success, auto-return.
-    setUserPassword(newPass);
-    setShowSuccess(true);
-    navTimer.current = setTimeout(() => {
-      setShowSuccess(false);
-      goBack();
-    }, 1800);
   };
 
-  const handleWrongClose = () => {
-    setShowWrong(false);
-    setCurrent('');
+  const handleNoticeClose = () => {
+    if (notice?.resetCurrent) setCurrent('');
+    setNotice(null);
   };
 
-  const confirmSignOut = () => {
-    // TODO: invalidate all sessions on the backend when available.
+  // Revokes every session for this user, then signs this device out too.
+  const confirmSignOut = async () => {
     setShowSignOut(false);
+    await signOutAll();
     router.replace('/sign-in');
   };
 
@@ -191,7 +213,9 @@ export default function ChangePassword() {
                   onPress={handleChange}
                   disabled={!canSubmit}
                 >
-                  <Text style={styles.changeBtnText}>Change Password</Text>
+                  <Text style={styles.changeBtnText}>
+                    {submitting ? 'Changing…' : 'Change Password'}
+                  </Text>
                 </Pressable>
               </View>
             )}
@@ -216,10 +240,10 @@ export default function ChangePassword() {
       </Modal>
 
       <ErrorModal
-        visible={showWrong}
-        onClose={handleWrongClose}
-        title="Failed to Set Password"
-        message="Your current password is incorrect. Please try again."
+        visible={!!notice}
+        onClose={handleNoticeClose}
+        title={notice?.title}
+        message={notice?.message}
         buttonText="Try Again"
       />
 

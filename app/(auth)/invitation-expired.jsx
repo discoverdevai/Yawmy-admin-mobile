@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RequestLinkModal from '../../components/RequestLinkModal';
 import SuccessModal from '../../components/SuccessModal';
+import ErrorModal from '../../components/ErrorModal';
 import { requestReactivation } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
@@ -15,6 +16,7 @@ export default function InvitationExpired() {
   const router = useRouter();
   const [showRequest, setShowRequest] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   // After the success popup, head to Sign In.
   useEffect(() => {
@@ -24,15 +26,21 @@ export default function InvitationExpired() {
   }, [showSuccess, router]);
 
   const submitRequest = async (email, message) => {
-    setShowRequest(false);
     try {
-      // Notifies the super-admin(s) to re-issue an invite. 204 = accepted.
+      // Backend checks the email was actually invited (and not yet active),
+      // then notifies the super-admin(s). 204 = accepted.
       await requestReactivation(email, message);
-    } catch (_) {
-      // Non-blocking: we still confirm to the user (the endpoint never leaks
-      // whether the email exists), matching the design's optimistic success.
+      setShowRequest(false);
+      setShowSuccess(true);
+    } catch (e) {
+      // e.g. 404 "Email not found or incorrect email" — show it so the user
+      // can correct the email and try again.
+      setShowRequest(false);
+      setNotice({
+        title: 'Request failed',
+        message: e.message || 'Could not send your request. Please try again.',
+      });
     }
-    setShowSuccess(true);
   };
 
   return (
@@ -72,6 +80,14 @@ export default function InvitationExpired() {
         title="We’ve Got Your Request!"
         message="Your request has been sent to the admin. You will receive a new access link shortly. Please check your email for updates."
         buttonText=""
+      />
+
+      <ErrorModal
+        visible={!!notice}
+        onClose={() => setNotice(null)}
+        title={notice?.title}
+        message={notice?.message}
+        buttonText="Try Again"
       />
     </SafeAreaView>
   );

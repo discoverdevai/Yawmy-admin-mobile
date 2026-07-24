@@ -1,5 +1,13 @@
-import { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,115 +16,81 @@ import ChevronDown from '../../assets/icons/chevron-down.svg';
 import Search from '../../assets/icons/search.svg';
 import Filter from '../../assets/icons/filter.svg';
 import EyeSeen from '../../assets/icons/eye-seen.svg';
-import AttendanceFilterModal from '../../components/AttendanceFilterModal';
+import RoomDateFilterModal from '../../components/RoomDateFilterModal';
+import ErrorModal from '../../components/ErrorModal';
+import { getIncidents } from '../../services/incidentService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
-// Dummy incident records (from Figma 598-116437). One per child incident.
-const INCIDENTS = [
-  {
-    id: '1',
-    name: 'Maren Botosh',
-    room: 'Sunshine Room',
-    reason: 'Fall incident.',
-    date: '01 Apr 2024',
-    time: 'Mon, Apr 1 – 12:00 PM',
-    description:
-      'Lorem ipsum dolor sit amet consectetur. Fusce morbi amet enim nunc faucibus. Magna faucibus penatibus molestie ultrices ut.',
-    action: 'Applied ice pack',
-    area: 'Left knee',
-    ackSeen: true,
-  },
-  {
-    id: '2',
-    name: 'Carla Lubin',
-    room: 'Rainbow Room',
-    reason: 'Minor scratch.',
-    date: '02 Apr 2024',
-    time: 'Tue, Apr 2 – 10:30 AM',
-    description:
-      'Lorem ipsum dolor sit amet consectetur. Fusce morbi amet enim nunc faucibus. Magna faucibus penatibus molestie ultrices ut.',
-    action: 'Cleaned and bandaged',
-    area: 'Right hand',
-    ackSeen: false,
-  },
-  {
-    id: '3',
-    name: 'Randy Baptista',
-    room: 'Blue Room',
-    reason: 'Allergic reaction.',
-    date: '03 Apr 2024',
-    time: 'Wed, Apr 3 – 09:15 AM',
-    description:
-      'Lorem ipsum dolor sit amet consectetur. Fusce morbi amet enim nunc faucibus. Magna faucibus penatibus molestie ultrices ut.',
-    action: 'Administered antihistamine',
-    area: 'Face',
-    ackSeen: true,
-  },
-  {
-    id: '4',
-    name: 'Hanna Carder',
-    room: 'Sunshine Room',
-    reason: 'Bite mark.',
-    date: '03 Apr 2024',
-    time: 'Wed, Apr 3 – 02:45 PM',
-    description:
-      'Lorem ipsum dolor sit amet consectetur. Fusce morbi amet enim nunc faucibus. Magna faucibus penatibus molestie ultrices ut.',
-    action: 'Cleaned and monitored',
-    area: 'Left arm',
-    ackSeen: true,
-  },
-  {
-    id: '5',
-    name: 'Terry Philips',
-    room: 'Sunshine Room',
-    reason: 'Fall incident.',
-    date: '04 Apr 2024',
-    time: 'Thu, Apr 4 – 11:00 AM',
-    description:
-      'Lorem ipsum dolor sit amet consectetur. Fusce morbi amet enim nunc faucibus. Magna faucibus penatibus molestie ultrices ut.',
-    action: 'Applied ice pack',
-    area: 'Forehead',
-    ackSeen: false,
-  },
-];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "15 Aug 2020" from an ISO instant — matches the filter's date format for comparison.
+const dateKey = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+};
+
+// "Mon, Apr 1 – 12:00 PM" from an ISO instant (device-local time).
+const fmtDateTime = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  let h = d.getHours();
+  const period = h < 12 ? 'AM' : 'PM';
+  h = h % 12 || 12;
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${WEEKDAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()} – ${h}:${min} ${period}`;
+};
 
 export default function IncidentLog() {
   const router = useRouter();
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState(null);
-  // Opening an incident marks its parent acknowledgement as seen.
-  const [seenIds, setSeenIds] = useState([]);
   const [showFilter, setShowFilter] = useState(false);
   const [roomFilter, setRoomFilter] = useState([]); // applied room names (empty = all)
   const [dateFilter, setDateFilter] = useState(null); // "DD MMM YYYY" | null
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getIncidents();
+      setIncidents(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load incidents.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/more');
   };
 
-  const toggle = (id) => {
-    setOpenId((cur) => (cur === id ? null : id));
-    setSeenIds((list) => (list.includes(id) ? list : [...list, id]));
-  };
+  const toggle = (id) => setOpenId((cur) => (cur === id ? null : id));
 
-  // Apply the filter: keep incidents matching the chosen rooms and/or date.
-  const applyFilter = ({ rooms, date }) => {
-    setRoomFilter(rooms);
-    setDateFilter(date);
-    setShowFilter(false);
-  };
-
-  const roomNames = [...new Set(INCIDENTS.map((i) => i.room))];
+  const roomNames = [...new Set(incidents.map((i) => i.roomName || 'Unassigned'))];
   const activeCount = roomFilter.length + (dateFilter ? 1 : 0);
 
   const q = query.trim().toLowerCase();
-  const list = INCIDENTS.filter(
-    (i) =>
-      (!q || i.name.toLowerCase().includes(q)) &&
-      (roomFilter.length === 0 || roomFilter.includes(i.room)) &&
-      (!dateFilter || i.date === dateFilter)
-  );
+  const list = incidents.filter((i) => {
+    const room = i.roomName || 'Unassigned';
+    return (
+      (!q || (i.childName || '').toLowerCase().includes(q)) &&
+      (roomFilter.length === 0 || roomFilter.includes(room)) &&
+      (!dateFilter || dateKey(i.incidentAt) === dateFilter)
+    );
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -153,85 +127,101 @@ export default function IncidentLog() {
       </View>
 
       {/* Incident list */}
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {list.map((item) => {
-          const open = openId === item.id;
-          return (
-            <View key={item.id} style={styles.group}>
-              <Pressable
-                style={[styles.card, open && styles.cardOpen]}
-                onPress={() => toggle(item.id)}
-              >
-                <View style={styles.cardText}>
-                  <Text style={styles.name}>{item.name}</Text>
-                  <Text style={[styles.reason, open && styles.reasonOpen]}>
-                    {item.room} | {item.reason}
-                  </Text>
-                </View>
-                <ChevronDown width={24} height={24} style={open ? styles.chevronUp : undefined} />
-              </Pressable>
-
-              {open && (
-                <View style={styles.detail}>
-                  <Text style={styles.time}>{item.time}</Text>
-
-                  <View style={styles.row}>
-                    <Text style={styles.bullet}>{'•'}</Text>
-                    <Text style={styles.rowText}>
-                      <Text style={styles.rowLabel}>Description: </Text>
-                      {item.description}
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
+      ) : (
+        <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+          {list.map((item) => {
+            const open = openId === item.id;
+            const room = item.roomName || 'Unassigned';
+            const seen = (item.acknowledgedCount || 0) > 0;
+            return (
+              <View key={item.id} style={styles.group}>
+                <Pressable
+                  style={[styles.card, open && styles.cardOpen]}
+                  onPress={() => toggle(item.id)}
+                >
+                  <View style={styles.cardText}>
+                    <Text style={styles.name}>{item.childName}</Text>
+                    <Text style={[styles.reason, open && styles.reasonOpen]}>
+                      {room} | {item.incidentType || '—'}
                     </Text>
                   </View>
-                  <View style={styles.divider} />
+                  <ChevronDown width={24} height={24} style={open ? styles.chevronUp : undefined} />
+                </Pressable>
 
-                  <View style={styles.row}>
-                    <Text style={styles.bullet}>{'•'}</Text>
-                    <Text style={styles.rowText}>
-                      <Text style={styles.rowLabel}>Action Taken: </Text>
-                      {item.action}
-                    </Text>
+                {open && (
+                  <View style={styles.detail}>
+                    <Text style={styles.time}>{fmtDateTime(item.incidentAt)}</Text>
+
+                    <View style={styles.row}>
+                      <Text style={styles.bullet}>{'•'}</Text>
+                      <Text style={styles.rowText}>
+                        <Text style={styles.rowLabel}>Description: </Text>
+                        {item.description || '—'}
+                      </Text>
+                    </View>
+                    <View style={styles.divider} />
+
+                    <View style={styles.row}>
+                      <Text style={styles.bullet}>{'•'}</Text>
+                      <Text style={styles.rowText}>
+                        <Text style={styles.rowLabel}>Action Taken: </Text>
+                        {item.actionTaken || '—'}
+                      </Text>
+                    </View>
+                    <View style={styles.divider} />
+
+                    <View style={styles.row}>
+                      <Text style={styles.bullet}>{'•'}</Text>
+                      <Text style={styles.rowText}>
+                        <Text style={styles.rowLabel}>Affected Area: </Text>
+                        {item.injuryArea || '—'}
+                      </Text>
+                    </View>
+                    <View style={styles.divider} />
+
+                    <View style={styles.ackRow}>
+                      <Text style={styles.rowLabel}>Parent Ack:</Text>
+                      {seen ? (
+                        <View style={styles.seenBadge}>
+                          <EyeSeen width={16} height={16} />
+                          <Text style={styles.seenText}>Seen</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.notSeenBadge}>
+                          <Text style={styles.notSeenText}>Not seen</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                  <View style={styles.divider} />
+                )}
+              </View>
+            );
+          })}
 
-                  <View style={styles.row}>
-                    <Text style={styles.bullet}>{'•'}</Text>
-                    <Text style={styles.rowText}>
-                      <Text style={styles.rowLabel}>Affected Area: </Text>
-                      {item.area}
-                    </Text>
-                  </View>
-                  <View style={styles.divider} />
+          {list.length === 0 && <Text style={styles.empty}>No incidents found.</Text>}
+        </ScrollView>
+      )}
 
-                  <View style={styles.ackRow}>
-                    <Text style={styles.rowLabel}>Parent Ack:</Text>
-                    {item.ackSeen || seenIds.includes(item.id) ? (
-                      <View style={styles.seenBadge}>
-                        <EyeSeen width={16} height={16} />
-                        <Text style={styles.seenText}>Seen</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.pendingBadge}>
-                        <Text style={styles.pendingText}>Pending</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              )}
-            </View>
-          );
-        })}
-
-        {list.length === 0 && (
-          <Text style={styles.empty}>No incidents found.</Text>
-        )}
-      </ScrollView>
-
-      <AttendanceFilterModal
+      <RoomDateFilterModal
         visible={showFilter}
         rooms={roomNames}
         initial={{ rooms: roomFilter, date: dateFilter }}
         onClose={() => setShowFilter(false)}
-        onApply={applyFilter}
+        onApply={({ rooms, date }) => {
+          setRoomFilter(rooms);
+          setDateFilter(date);
+          setShowFilter(false);
+        }}
+      />
+
+      <ErrorModal
+        visible={!!error && !loading}
+        title="Something went wrong"
+        message={error}
+        buttonText="OK"
+        onClose={() => setError(null)}
       />
     </SafeAreaView>
   );
@@ -337,13 +327,13 @@ const styles = StyleSheet.create({
     borderRadius: Radii.button,
   },
   seenText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: '#247400' },
-  pendingBadge: {
-    backgroundColor: Colors.accentSecBg,
+  notSeenBadge: {
+    backgroundColor: Colors.lightRedBg,
     paddingHorizontal: Spacing.sm + 4,
     paddingVertical: Spacing.sm,
     borderRadius: Radii.button,
   },
-  pendingText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.accentText },
+  notSeenText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.redText },
 
   empty: { textAlign: 'center', fontFamily: Fonts.regular, fontSize: 14, color: Colors.gray, marginTop: Spacing.lg },
 });

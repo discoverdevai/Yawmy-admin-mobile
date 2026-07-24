@@ -1,52 +1,56 @@
 import { useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
+import {
+  Modal,
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Search from '../assets/icons/search.svg';
 import LinkIcon from '../assets/icons/link.svg';
 import Done from '../assets/icons/done.svg';
-import { useRooms } from '../context/RoomsContext';
-import { CHILDREN } from '../constants/people';
+import AuthImage from './AuthImage';
+import { getLinkableChildren } from '../services/parentService';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
 const childAvatar = require('../assets/images/child-avatar.png');
+const shortId = (id) => String(id || '').replace(/-/g, '').slice(0, 8).toUpperCase();
 
 /**
- * Bottom-sheet to link nursery children to a parent (Figma 598-111688 / 598-111841).
- * Each row has a Link button that flips to "Done" once linked; Confirm commits.
+ * Bottom-sheet to link nursery children to a parent (Figma 598-111724).
+ * Fetches children that can be linked (none of the parent's role yet). Each row
+ * has a Link button that flips to "Done"; Confirm sends the selected ids.
  */
-export default function LinkChildrenModal({ visible, initialLinked = [], onClose, onConfirm }) {
-  const { rooms, enrolledChildren } = useRooms();
+export default function LinkChildrenModal({ visible, parentId, submitting, onClose, onConfirm }) {
   const [query, setQuery] = useState('');
-  const [linkedIds, setLinkedIds] = useState([]);
+  const [children, setChildren] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // The room a child belongs to (used to record "Name, Room" on the parent).
-  const roomNameOf = (childId) => {
-    const r = rooms.find((rm) => rm.childIds.includes(childId));
-    return r ? r.name : 'Unassigned';
-  };
-
-  // Resolve the parent's existing linked children (by name) to child ids.
   useEffect(() => {
-    if (!visible) return;
-    const names = initialLinked.map((c) => c.name);
-    setLinkedIds(enrolledChildren.filter((c) => names.includes(c.name)).map((c) => c.id));
+    if (!visible || !parentId) return;
+    let alive = true;
+    setLoading(true);
+    setSelectedIds([]);
     setQuery('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+    getLinkableChildren(parentId)
+      .then((list) => alive && setChildren(Array.isArray(list) ? list : []))
+      .catch(() => alive && setChildren([]))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [visible, parentId]);
 
   const toggle = (id) =>
-    setLinkedIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
+    setSelectedIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
 
   const q = query.trim().toLowerCase();
-  const list = enrolledChildren.filter((c) => c.name.toLowerCase().includes(q));
-
-  const handleConfirm = () => {
-    const linked = enrolledChildren
-      .filter((c) => linkedIds.includes(c.id))
-      .map((c) => ({ name: c.name, room: roomNameOf(c.id) }));
-    onConfirm(linked);
-  };
+  const list = children.filter((c) => (c.fullName || '').toLowerCase().includes(q));
 
   return (
     <Modal visible={visible} transparent animationType="slide" statusBarTranslucent onRequestClose={onClose}>
@@ -71,43 +75,55 @@ export default function LinkChildrenModal({ visible, initialLinked = [], onClose
               </View>
 
               {/* Children list */}
-              <ScrollView
-                style={styles.list}
-                contentContainerStyle={styles.listContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {list.length === 0 && <Text style={styles.empty}>No children found.</Text>}
-                {list.map((c) => {
-                  const linked = linkedIds.includes(c.id);
-                  return (
-                    <View key={c.id} style={styles.card}>
-                      <Image source={childAvatar} style={styles.avatar} contentFit="cover" />
-                      <View style={styles.cardText}>
-                        <Text style={styles.name} numberOfLines={1}>
-                          {c.name}
-                        </Text>
-                        <Text style={styles.childId}>ID: {c.childId}</Text>
+              {loading ? (
+                <ActivityIndicator style={{ marginVertical: Spacing.lg }} color={Colors.primary} />
+              ) : (
+                <ScrollView
+                  style={styles.list}
+                  contentContainerStyle={styles.listContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  {list.length === 0 && <Text style={styles.empty}>No children available to link.</Text>}
+                  {list.map((c) => {
+                    const linked = selectedIds.includes(c.id);
+                    return (
+                      <View key={c.id} style={styles.card}>
+                        <AuthImage
+                          path={c.photoUrl}
+                          fallback={childAvatar}
+                          style={styles.avatar}
+                          contentFit="cover"
+                        />
+                        <View style={styles.cardText}>
+                          <Text style={styles.name} numberOfLines={1}>{c.fullName}</Text>
+                          <Text style={styles.childId}>ID: {shortId(c.id)}</Text>
+                        </View>
+                        <Pressable
+                          onPress={() => toggle(c.id)}
+                          style={[styles.actionBtn, linked ? styles.doneBtn : styles.linkBtn]}
+                        >
+                          {linked ? <Done width={16} height={16} /> : <LinkIcon width={16} height={16} />}
+                          <Text style={[styles.actionText, linked ? styles.doneText : styles.linkText]}>
+                            {linked ? 'Done' : 'Link'}
+                          </Text>
+                        </Pressable>
                       </View>
-                      <Pressable
-                        onPress={() => toggle(c.id)}
-                        style={[styles.actionBtn, linked ? styles.doneBtn : styles.linkBtn]}
-                      >
-                        {linked ? <Done width={16} height={16} /> : <LinkIcon width={16} height={16} />}
-                        <Text style={[styles.actionText, linked ? styles.doneText : styles.linkText]}>
-                          {linked ? 'Done' : 'Link'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  );
-                })}
-              </ScrollView>
+                    );
+                  })}
+                </ScrollView>
+              )}
 
               <Pressable
-                style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
-                onPress={handleConfirm}
+                style={({ pressed }) => [
+                  styles.cta,
+                  (submitting || selectedIds.length === 0) && styles.ctaDisabled,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => onConfirm(selectedIds)}
+                disabled={submitting || selectedIds.length === 0}
               >
-                <Text style={styles.ctaText}>Confirm</Text>
+                <Text style={styles.ctaText}>{submitting ? 'Linking…' : 'Confirm'}</Text>
               </Pressable>
             </View>
           </SafeAreaView>
@@ -191,6 +207,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: Spacing.xs,
   },
+  ctaDisabled: { backgroundColor: Colors.disabledButton },
   pressed: { opacity: 0.85 },
   ctaText: { fontFamily: Fonts.bold, fontWeight: '700', fontSize: 16, color: Colors.background },
 });

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CheckWhite from '../assets/icons/check-white.svg';
-import { ROOM_CAPACITY } from '../constants/people';
+import RoomIcon from '../assets/icons/tab-rooms.svg';
+import AuthImage from './AuthImage';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
 /**
@@ -54,7 +54,8 @@ export default function ReassignTeacherModal({
               >
                 {rooms.map((r) => {
                   const sel = selected.includes(r.id);
-                  const slots = Math.max(ROOM_CAPACITY - (r.childIds?.length || 0), 0);
+                  const childCount = r.childCount ?? 0;
+                  const slots = Math.max((r.capacity ?? 0) - childCount, 0);
                   return (
                     <Pressable
                       key={r.id}
@@ -62,12 +63,16 @@ export default function ReassignTeacherModal({
                       style={[styles.room, sel && styles.roomOn]}
                     >
                       <View style={styles.roomAvatar}>
-                        <Image source={r.img} style={styles.roomAvatarImg} contentFit="contain" />
+                        {r.imageUrl ? (
+                          <AuthImage path={r.imageUrl} style={styles.roomAvatarImg} contentFit="cover" />
+                        ) : (
+                          <RoomIcon width={22} height={22} />
+                        )}
                       </View>
                       <View style={styles.roomText}>
                         <Text style={styles.roomName}>{r.name}</Text>
                         <Text style={styles.roomSlots}>
-                          {r.childIds?.length || 0} children, {slots} available slots
+                          {childCount} children, {slots} available slots
                         </Text>
                       </View>
                       <View style={[styles.checkbox, sel && styles.checkboxOn]}>
@@ -123,8 +128,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secStroke,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  roomAvatarImg: { width: 28, height: 28 },
+  roomAvatarImg: { width: 40, height: 40, borderRadius: Radii.button },
   roomText: { flex: 1, gap: Spacing.xs },
   roomName: {
     fontFamily: Fonts.bold,

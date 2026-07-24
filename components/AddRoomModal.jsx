@@ -17,14 +17,14 @@ import ChevronDown from '../assets/icons/chevron-down.svg';
 import Check from '../assets/icons/check.svg';
 import ErrorModal from './ErrorModal';
 import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
-import { useRooms } from '../context/RoomsContext';
+import { getTeachers } from '../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../constants/theme';
 
 export default function AddRoomModal({ visible, onClose, onAdd }) {
-  const { enrolledTeachers } = useRooms();
   const [image, setImage] = useState(null);
   const [name, setName] = useState('');
-  const [teachers, setTeachers] = useState([]);
+  const [teacherList, setTeacherList] = useState([]); // [{ id, fullName, email }]
+  const [teachers, setTeachers] = useState([]); // selected teacher ids
   const [teacherOpen, setTeacherOpen] = useState(false);
   const [notice, setNotice] = useState(null);
   const keyboardHeight = useKeyboardHeight();
@@ -38,7 +38,20 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
     }).start();
   }, [keyboardHeight, shift]);
 
-  const canSubmit = name.trim().length > 0;
+  // Load the real active teachers whenever the sheet opens.
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    getTeachers()
+      .then((list) => alive && setTeacherList(Array.isArray(list) ? list : []))
+      .catch(() => alive && setTeacherList([]));
+    return () => {
+      alive = false;
+    };
+  }, [visible]);
+
+  // Logo AND name are mandatory; teacher(s) optional (assignable later).
+  const canSubmit = name.trim().length > 0 && !!image;
 
   const reset = () => {
     setImage(null);
@@ -64,14 +77,14 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
     if (!result.canceled) setImage(result.assets[0].uri);
   };
 
-  const toggleTeacher = (t) =>
+  const toggleTeacher = (id) =>
     setTeachers((list) =>
-      list.includes(t) ? list.filter((x) => x !== t) : [...list, t]
+      list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
     );
 
   const handleAdd = () => {
     if (!canSubmit) return;
-    onAdd({ name: name.trim(), image, teachers });
+    onAdd({ name: name.trim(), image, teacherIds: teachers });
     reset();
     onClose();
   };
@@ -81,7 +94,12 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
     onClose();
   };
 
-  const teacherSummary = teachers.length ? teachers.join(', ') : 'Select teacher(s)';
+  const teacherSummary = teachers.length
+    ? teacherList
+        .filter((t) => teachers.includes(t.id))
+        .map((t) => t.fullName)
+        .join(', ')
+    : 'Select teacher(s)';
 
   return (
     <Modal
@@ -136,7 +154,9 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
 
               {/* Assign teachers */}
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Assign Teacher(s)</Text>
+                <Text style={styles.label}>
+                  Assign Teacher(s) <Text style={styles.optional}>(Optional)</Text>
+                </Text>
                 <Pressable
                   style={[styles.inputBox, teacherOpen && styles.inputBoxOpen]}
                   onPress={() => setTeacherOpen((o) => !o)}
@@ -159,17 +179,25 @@ export default function AddRoomModal({ visible, onClose, onAdd }) {
                 {teacherOpen && (
                   <View style={styles.dropdownPanel}>
                     <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                      {enrolledTeachers.map((t) => {
-                        const selected = teachers.includes(t);
-                        return (
-                          <Pressable key={t} style={styles.teacherRow} onPress={() => toggleTeacher(t)}>
-                            <Text style={styles.teacherName}>{t}</Text>
-                            <View style={[styles.checkbox, selected && styles.checkboxOn]}>
-                              {selected && <Check width={16} height={16} />}
-                            </View>
-                          </Pressable>
-                        );
-                      })}
+                      {teacherList.length === 0 ? (
+                        <Text style={styles.emptyTeachers}>No teachers available yet.</Text>
+                      ) : (
+                        teacherList.map((t) => {
+                          const selected = teachers.includes(t.id);
+                          return (
+                            <Pressable
+                              key={t.id}
+                              style={styles.teacherRow}
+                              onPress={() => toggleTeacher(t.id)}
+                            >
+                              <Text style={styles.teacherName}>{t.fullName}</Text>
+                              <View style={[styles.checkbox, selected && styles.checkboxOn]}>
+                                {selected && <Check width={16} height={16} />}
+                              </View>
+                            </Pressable>
+                          );
+                        })
+                      )}
                     </ScrollView>
                   </View>
                 )}
@@ -305,6 +333,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontSize: 14,
     color: Colors.textBlack,
+  },
+  optional: {
+    fontFamily: Fonts.regular,
+    fontWeight: '400',
+    fontSize: 12,
+    color: Colors.gray,
+  },
+  emptyTeachers: {
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    color: Colors.gray,
+    textAlign: 'center',
+    paddingVertical: Spacing.md,
   },
   checkbox: {
     width: 24,

@@ -16,7 +16,7 @@ import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Sms from '../../assets/icons/sms.svg';
 import ErrorOutline from '../../assets/icons/error-outline.svg';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
-import { isRegisteredEmail } from '../../constants/dummyUser';
+import { forgotPassword } from '../../services/authService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const illustration = require('../../assets/images/forgot-password.png');
@@ -25,6 +25,7 @@ export default function ForgotPassword() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [notRegistered, setNotRegistered] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
 
@@ -44,13 +45,28 @@ export default function ForgotPassword() {
     else router.replace('/sign-in');
   };
 
-  const handleSend = () => {
-    if (!isValidEmail) return;
-    // TODO: replace with a real "send reset code" API call.
-    if (isRegisteredEmail(email)) {
-      router.push('/verify-code');
-    } else {
-      setNotRegistered(true);
+  const handleSend = async () => {
+    if (!isValidEmail || submitting) return;
+    setSubmitting(true);
+    try {
+      // POST /auth/forgot-password → { token, expiresInSeconds }; emails the OTP.
+      const res = await forgotPassword(email.trim());
+      router.push({
+        pathname: '/verify-code',
+        params: {
+          email: email.trim(),
+          token: res.token,
+          expiresInSeconds: String(res.expiresInSeconds ?? 30),
+        },
+      });
+    } catch (e) {
+      if (e.status === 404) {
+        setNotRegistered(true); // "This email is not registered"
+      } else {
+        setNotRegistered(true);
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
