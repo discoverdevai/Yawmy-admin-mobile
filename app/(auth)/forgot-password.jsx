@@ -16,7 +16,9 @@ import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import Sms from '../../assets/icons/sms.svg';
 import ErrorOutline from '../../assets/icons/error-outline.svg';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
+import ErrorModal from '../../components/ErrorModal';
 import { forgotPassword } from '../../services/authService';
+import { isNetworkError } from '../../config/api';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
 const illustration = require('../../assets/images/forgot-password.png');
@@ -26,6 +28,8 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [notRegistered, setNotRegistered] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Server/connection failures — shown as a modal, never on the email field.
+  const [failure, setFailure] = useState(null);
   const keyboardHeight = useKeyboardHeight();
   const shift = useRef(new Animated.Value(0)).current;
 
@@ -61,9 +65,20 @@ export default function ForgotPassword() {
       });
     } catch (e) {
       if (e.status === 404) {
+        // The only case that belongs on the field: this email has no account.
         setNotRegistered(true); // "This email is not registered"
+      } else if (isNetworkError(e)) {
+        // We never reached the server. Marking the field "not registered" here
+        // would be a lie, and would send the user chasing an email that is fine.
+        setFailure({
+          title: 'Connection Problem',
+          message: e.message || 'We couldn’t reach the server. Please try again.',
+        });
       } else {
-        setNotRegistered(true);
+        setFailure({
+          title: 'Couldn’t Send the Code',
+          message: e.message || 'Something went wrong. Please try again.',
+        });
       }
     } finally {
       setSubmitting(false);
@@ -150,6 +165,14 @@ export default function ForgotPassword() {
           </Pressable>
         </View>
       </Animated.View>
+
+      <ErrorModal
+        visible={!!failure}
+        title={failure?.title}
+        message={failure?.message}
+        buttonText="Try Again"
+        onClose={() => setFailure(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -24,13 +24,53 @@ export function fileUrl(path) {
   return /^https?:\/\//.test(path) ? path : `${FILES_BASE}${path}`;
 }
 
-const DEFAULT_TIMEOUT = 15000; // 15 seconds
+// Render's free tier sleeps when idle, so the first request after a while pays
+// a cold start. Keep this generous enough that a waking server is not mistaken
+// for a dead one.
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
 
 // Token getter – set by AuthContext so every request can attach Authorization
 let _getToken = () => null;
 
 export function setTokenGetter(fn) {
   _getToken = fn;
+}
+
+// Called when the access token looks expired, to swap it for a fresh one. Set
+// by AuthContext; resolves to the new access token, or null when it could not
+// refresh (revoked / expired refresh token → the session is genuinely over).
+let _refreshToken = async () => null;
+
+// Called when refreshing fails, so AuthContext can drop the session.
+let _onAuthFailure = () => {};
+
+export function setAuthHandlers({ getToken, refresh, onAuthFailure }) {
+  if (getToken) _getToken = getToken;
+  if (refresh) _refreshToken = refresh;
+  if (onAuthFailure) _onAuthFailure = onAuthFailure;
+}
+
+// Only one refresh may be in flight. The backend ROTATES refresh tokens (the
+// old one is revoked on every /auth/refresh), so if three screens each fired
+// their own refresh, the first would invalidate the token the other two are
+// holding and they would fail — signing the admin out for no reason.
+let _refreshInFlight = null;
+
+function refreshOnce() {
+  if (!_refreshInFlight) {
+    _refreshInFlight = Promise.resolve()
+      .then(() => _refreshToken())
+      .catch(() => null)
+      .finally(() => {
+        _refreshInFlight = null;
+      });
+  }
+  return _refreshInFlight;
+}
+
+/** True for errors that mean "we never reached the server", as opposed to a real rejection. */
+export function isNetworkError(error) {
+  return !!error && error.isNetworkError === true;
 }
 
 /**
@@ -50,11 +90,17 @@ export async function apiRequest(endpoint, options = {}) {
     body,
     headers = {},
     timeout = DEFAULT_TIMEOUT,
+    // Set on /auth/refresh itself so a failing refresh cannot trigger another
+    // refresh, and on public endpoints where a 401 is a real answer.
+    skipAuthRefresh = false,
+    _isRetry = false,
   } = options;
 
+  // Copied, not mutated: the same options object may be replayed on retry.
+  const requestHeaders = { ...headers };
   const token = _getToken();
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    requestHeaders['Authorization'] = `Bearer ${token}`;
   }
 
   // Multipart uploads (e.g. the nursery logo) pass a FormData body. In that case
@@ -71,7 +117,7 @@ export async function apiRequest(endpoint, options = {}) {
       headers: {
         ...(isForm ? {} : { 'Content-Type': 'application/json' }),
         Accept: 'application/json',
-        ...headers,
+        ...requestHeaders,
       },
       body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
       signal: controller.signal,
@@ -80,6 +126,24 @@ export async function apiRequest(endpoint, options = {}) {
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
+      // The access token lives 30 minutes; past that every request fails until
+      // we swap it for a fresh one using the refresh token.
+      //
+      // 403 as well as 401: the backend's JwtAuthFilter swallows an expired JWT
+      // and clears the security context, so the request arrives unauthenticated
+      // and Spring's default entry point answers 403 — never 401. Keying only
+      // on 401 would mean the session silently dies after 30 minutes.
+      // A 403 that is a genuine permission denial simply fails again on the
+      // replay, which `_isRetry` stops from looping.
+      const maybeExpired = response.status === 401 || response.status === 403;
+      if (maybeExpired && token && !skipAuthRefresh && !_isRetry) {
+        const fresh = await refreshOnce();
+        if (fresh) {
+          return apiRequest(endpoint, { ...options, _isRetry: true });
+        }
+        _onAuthFailure();
+      }
+
       const message =
         (data && data.message) ||
         (data && data.error) ||
@@ -91,11 +155,25 @@ export async function apiRequest(endpoint, options = {}) {
 
     return data;
   } catch (err) {
+    // Flagged so callers can tell "couldn't reach the server" apart from a real
+    // rejection, and not destroy a good session over a dropped connection.
     if (err.name === 'AbortError') {
-      throw new Error('Request timed out. Please check your connection.');
+      const timeoutError = new Error(
+        'Request timed out. Please check your connection and try again.'
+      );
+      timeoutError.isNetworkError = true;
+      throw timeoutError;
     }
     if (err.message === 'Network request failed') {
-      throw new Error('Unable to reach the server. Please try again later.');
+      const networkError = new Error(
+        'Unable to reach the server. Please try again later.'
+      );
+      networkError.isNetworkError = true;
+      throw networkError;
+    }
+    // A 5xx means the server is up but broken — also not the caller's fault.
+    if (err.status >= 500) {
+      err.isNetworkError = true;
     }
     throw err;
   } finally {

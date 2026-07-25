@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as authService from '../services/authService';
-import { setTokenGetter } from '../config/api';
+import { setAuthHandlers } from '../config/api';
 
 const AuthContext = createContext(null);
 
@@ -15,18 +15,60 @@ export function AuthProvider({ children }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true); // true while restoring session
 
+  // The ref is what the API layer reads, and it is authoritative: refresh and
+  // activateSession set it imperatively, before the matching state update has
+  // committed. Syncing it in an effect (rather than on every render) means an
+  // unrelated re-render cannot momentarily put the OLD token back and send a
+  // just-expired token on the replayed request.
   const tokenRef = useRef(token);
-  tokenRef.current = token;
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
 
   // This device's refresh token. Kept in a ref (not state) because it is only
   // ever read imperatively — it identifies this session to /auth/logout so we
   // can sign out this device without touching the user's other devices.
   const refreshRef = useRef(null);
 
-  // Wire up the api token getter once
-  useEffect(() => {
-    setTokenGetter(() => tokenRef.current);
+  // Wipe local session state. Shared by both sign-out paths and by a failed
+  // refresh. Declared before the api wiring below, which depends on it.
+  const clearSession = useCallback(async () => {
+    tokenRef.current = null; // clear immediately so API doesn't send a stale token
+    refreshRef.current = null;
+    setUser(null);
+    setToken(null);
+    setIsAuthenticated(false);
+    await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_KEY, USER_KEY]);
   }, []);
+
+  // Wire up the api layer once: how to read the current token, how to renew it
+  // when it expires, and what to do when renewal is no longer possible.
+  useEffect(() => {
+    setAuthHandlers({
+      getToken: () => tokenRef.current,
+      refresh: async () => {
+        const current = refreshRef.current;
+        if (!current) return null;
+        try {
+          const fresh = await authService.refreshSession(current);
+          // The backend rotates refresh tokens, so BOTH must be replaced.
+          tokenRef.current = fresh.accessToken;
+          setToken(fresh.accessToken);
+          refreshRef.current = fresh.refreshToken ?? null;
+          await AsyncStorage.multiSet([
+            [TOKEN_KEY, fresh.accessToken],
+            ...(fresh.refreshToken ? [[REFRESH_KEY, fresh.refreshToken]] : []),
+          ]);
+          return fresh.accessToken;
+        } catch (_) {
+          return null; // revoked or expired → caller triggers onAuthFailure
+        }
+      },
+      onAuthFailure: () => {
+        clearSession();
+      },
+    });
+  }, [clearSession]);
 
   // Restore persisted session on mount
   useEffect(() => {
@@ -80,16 +122,6 @@ export function AuthProvider({ children }) {
     },
     [activateSession]
   );
-
-  // Wipe local session state. Shared by both sign-out paths.
-  const clearSession = useCallback(async () => {
-    tokenRef.current = null; // clear immediately so API doesn't send a stale token
-    refreshRef.current = null;
-    setUser(null);
-    setToken(null);
-    setIsAuthenticated(false);
-    await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_KEY, USER_KEY]);
-  }, []);
 
   /** Sign out this device only — the user's other devices stay signed in. */
   const signOut = useCallback(async () => {

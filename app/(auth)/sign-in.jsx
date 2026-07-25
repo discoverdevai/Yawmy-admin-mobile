@@ -17,7 +17,49 @@ import PasswordInput from '../../components/PasswordInput';
 import ErrorModal from '../../components/ErrorModal';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import { useAuth } from '../../context/AuthContext';
+import { isNetworkError } from '../../config/api';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
+
+/**
+ * Turn a sign-in failure into what the user should actually be told.
+ *
+ * The backend answers a wrong email and a wrong password with the SAME 401
+ * ("Invalid email or password") on purpose, so those two cannot be told apart —
+ * otherwise the screen could be used to discover which emails have accounts.
+ */
+function describeSignInError(e) {
+  if (isNetworkError(e)) {
+    return {
+      title: 'Connection Problem',
+      message:
+        e.message || 'We couldn’t reach the server. Please check your connection and try again.',
+    };
+  }
+
+  const message = e?.message || '';
+
+  // Invited but never accepted: the account exists with no password yet, so
+  // "wrong password" would send them hunting for one they never created.
+  if (/not activated/i.test(message)) {
+    return {
+      title: 'Account Not Activated',
+      message:
+        'Please open the invitation link we emailed you and set your password first, then sign in.',
+    };
+  }
+
+  if (e?.status === 401) {
+    return {
+      title: 'Invalid Credentials',
+      message: 'The email or password you entered is incorrect. Please try again.',
+    };
+  }
+
+  return {
+    title: 'Couldn’t Sign In',
+    message: message || 'Something went wrong. Please try again.',
+  };
+}
 
 export default function SignIn() {
   const router = useRouter();
@@ -48,7 +90,7 @@ export default function SignIn() {
       await signIn(email.trim(), password); // POST /auth/login → session
       router.replace('/home');
     } catch (e) {
-      setError(e.message || 'The email or password you entered is incorrect.');
+      setError(describeSignInError(e));
     } finally {
       setSubmitting(false);
     }
@@ -137,8 +179,9 @@ export default function SignIn() {
 
       <ErrorModal
         visible={!!error}
+        title={error?.title}
+        message={error?.message}
         onClose={() => setError(null)}
-        message={error}
       />
     </SafeAreaView>
   );

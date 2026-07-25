@@ -20,14 +20,21 @@ export function updateStaffMember(id, patch) {
   return apiRequest(`/admin/staff/${id}`, { method: 'PATCH', body: patch });
 }
 
-/** Remove a teacher from the nursery (soft-delete: unassign rooms + disable + hide). */
+/**
+ * Fully remove a teacher from the nursery.
+ * Soft-delete: unassigns all rooms, disables the account and hides it.
+ */
 export function deleteStaffMember(id) {
   return apiRequest(`/admin/staff/${id}`, { method: 'DELETE' });
 }
 
-/** Fully remove a teacher from the nursery (unassign all rooms + soft-delete). */
-export function deleteStaffMember(id) {
-  return apiRequest(`/admin/staff/${id}`, { method: 'DELETE' });
+/**
+ * Email a fresh invite to a teacher who hasn't activated yet — the fix for a
+ * PENDING or INVITATION_EXPIRED teacher. Throws 409 if they already activated.
+ * Responds 204.
+ */
+export function resendStaffInvite(id) {
+  return apiRequest(`/admin/staff/${id}/resend-invite`, { method: 'POST' });
 }
 
 /**

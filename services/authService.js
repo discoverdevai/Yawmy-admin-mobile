@@ -1,14 +1,30 @@
 import { apiRequest } from '../config/api';
 
 /**
- * Auth API calls. Endpoints are placeholders — adjust to match the
- * nursery-admin backend once it is available.
+ * Auth API calls — verified against nursery-BE `AuthController` (/api/auth/**).
+ *
+ * Token endpoints return a TokenResponse:
+ *   { accessToken, refreshToken, tokenType: 'Bearer', expiresInSeconds }
+ * The access token lives 30 minutes, the refresh token 14 days.
  */
 
 export function signIn(email, password) {
   return apiRequest('/auth/login', {
     method: 'POST',
     body: { email, password },
+    skipAuthRefresh: true, // a 401 here is a wrong password, not an expired token
+  });
+}
+
+/**
+ * Swaps a refresh token for a brand new pair. The old refresh token is revoked
+ * server-side, so the returned one must replace it in storage.
+ */
+export function refreshSession(refreshToken) {
+  return apiRequest('/auth/refresh', {
+    method: 'POST',
+    body: { refreshToken },
+    skipAuthRefresh: true, // never let a failing refresh trigger another refresh
   });
 }
 

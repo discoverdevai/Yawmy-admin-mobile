@@ -21,7 +21,11 @@ import DeleteChildModal from '../../components/DeleteChildModal';
 import LinkChildrenModal from '../../components/LinkChildrenModal';
 import RoomArchivedModal from '../../components/RoomArchivedModal';
 import ErrorModal from '../../components/ErrorModal';
-import { getStaffMember, deleteStaffMember } from '../../services/staffService';
+import {
+  getStaffMember,
+  deleteStaffMember,
+  resendStaffInvite,
+} from '../../services/staffService';
 import { getParentMember, linkChildren, deleteParentMember } from '../../services/parentService';
 import {
   getRooms,
@@ -180,6 +184,26 @@ export default function AccountDetails() {
     }
   };
 
+  // A teacher who never accepted (PENDING) or whose 48-hour link lapsed
+  // (INVITATION_EXPIRED) cannot be invited again from "Add member" — their
+  // account already exists — so re-issuing the invite has to happen from here.
+  const canResendInvite =
+    isStaff && (member?.status === 'expired' || member?.status === 'pending');
+
+  const handleResendInvite = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await resendStaffInvite(id);
+      setSuccessMsg('Invitation sent again');
+      await load(); // status/expiry refresh with the new invite
+    } catch (e) {
+      setError(e.message || 'Could not resend the invitation.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmDelete = async () => {
     setShowDelete(false);
     if (busy) return;
@@ -306,6 +330,21 @@ export default function AccountDetails() {
 
       {/* Footer actions */}
       <View style={styles.footer}>
+        {canResendInvite && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.resendBtn,
+              busy && styles.pressed,
+              pressed && styles.pressed,
+            ]}
+            onPress={handleResendInvite}
+            disabled={busy}
+          >
+            <Text style={styles.resendText}>
+              {busy ? 'Sending…' : 'Resend Invitation'}
+            </Text>
+          </Pressable>
+        )}
         <Pressable
           style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
           onPress={() =>
@@ -506,5 +545,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   reassignText: { fontFamily: Fonts.bold, fontWeight: '700', fontSize: 16, color: Colors.primary },
+  resendBtn: {
+    height: 48,
+    borderRadius: Radii.button,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resendText: { fontFamily: Fonts.bold, fontWeight: '700', fontSize: 16, color: Colors.primary },
   pressed: { opacity: 0.85 },
 });
