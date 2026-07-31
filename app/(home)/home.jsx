@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -130,36 +130,53 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { nurseryName, logoUrl } = useData();
+  const { nurseryName, logoUrl, refreshNursery } = useData();
   const { unreadCount, refreshUnreadCount } = useNotifications();
-
-  // Re-check the unread badge every time the home screen comes into focus
-  // (e.g. after reading/clearing notifications and navigating back).
-  useFocusEffect(
-    useCallback(() => {
-      refreshUnreadCount();
-    }, [refreshUnreadCount])
-  );
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await getDashboard();
-        if (active) setData(res);
-      } catch (_) {
-        // leave data null → cards show 0; screen still renders
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
+  // Ticket for the newest request — an older response that lands late must not
+  // overwrite a newer one (or a request the screen already navigated away from).
+  const requestId = useRef(0);
+
+  const load = useCallback(async () => {
+    const ticket = ++requestId.current;
+    setLoading(true);
+    try {
+      const res = await getDashboard();
+      if (ticket !== requestId.current) return;
+      setData(res);
+      setError(null);
+    } catch (e) {
+      // A failed request must never read as a nursery with 0 children — say so
+      // and give the admin a way to retry.
+      if (ticket !== requestId.current) return;
+      setError(e?.message || 'Could not load the dashboard.');
+    } finally {
+      if (ticket === requestId.current) setLoading(false);
+    }
   }, []);
+
+  // Everything here is time-sensitive — today's check-ins and incidents, this
+  // week's attendance, the unread badge, the nursery logo/name — so refresh on
+  // every focus, not once on mount. /profile and /notifications are pushed on
+  // top of this screen, so it stays mounted while they're open.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+      refreshUnreadCount();
+      refreshNursery().catch(() => {});
+    }, [load, refreshUnreadCount, refreshNursery])
+  );
+
+  // Only the very first load blanks the screen; focus refreshes swap the
+  // numbers in place so returning from another screen doesn't flash a spinner.
+  const firstLoad = loading && !data;
+  // An error with nothing cached to fall back on — the only case where the
+  // screen has nothing truthful to show.
+  const failed = !!error && !data;
 
   // Chart data from the API; fall back to zeroed Sat..Thu while loading.
   const attendance = (data?.weeklyAttendance ?? []).map((d) => ({
@@ -170,7 +187,9 @@ export default function Home() {
     ? attendance
     : ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu'].map((label) => ({ label, value: 0 }));
 
-  const statValue = (key, unit) => `${data?.[key] ?? 0} ${unit}`;
+  // A dash while the first request is in flight — "0 Child" would be a claim
+  // about the nursery that we can't make yet.
+  const statValue = (key, unit) => (firstLoad ? `— ${unit}` : `${data?.[key] ?? 0} ${unit}`);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -203,44 +222,59 @@ export default function Home() {
             <Notification width={24} height={24} />
             {unreadCount > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{unreadCount}</Text>
+                {/* Past 99 the exact number stops being useful and the pill
+                    would outgrow the icon. */}
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </Text>
               </View>
             )}
           </Pressable>
         </View>
 
-        {/* Overview */}
-        <View style={styles.section}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>Overview</Text>
-            <DateChip text={todayLabel()} />
+        {failed ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable onPress={load} hitSlop={8} disabled={loading}>
+              <Text style={styles.retryText}>{loading ? 'Loading…' : 'Try Again'}</Text>
+            </Pressable>
           </View>
-          <View style={styles.statsGrid}>
-            <View style={styles.statRow}>
-              <StatCard {...STATS[0]} value={statValue(STATS[0].key, STATS[0].unit)} />
-              <StatCard {...STATS[1]} value={statValue(STATS[1].key, STATS[1].unit)} />
+        ) : (
+          <>
+            {/* Overview */}
+            <View style={styles.section}>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitle}>Overview</Text>
+                <DateChip text={todayLabel()} />
+              </View>
+              <View style={styles.statsGrid}>
+                <View style={styles.statRow}>
+                  <StatCard {...STATS[0]} value={statValue(STATS[0].key, STATS[0].unit)} />
+                  <StatCard {...STATS[1]} value={statValue(STATS[1].key, STATS[1].unit)} />
+                </View>
+                <View style={styles.statRow}>
+                  <StatCard {...STATS[2]} value={statValue(STATS[2].key, STATS[2].unit)} />
+                  <StatCard {...STATS[3]} value={statValue(STATS[3].key, STATS[3].unit)} />
+                </View>
+              </View>
             </View>
-            <View style={styles.statRow}>
-              <StatCard {...STATS[2]} value={statValue(STATS[2].key, STATS[2].unit)} />
-              <StatCard {...STATS[3]} value={statValue(STATS[3].key, STATS[3].unit)} />
-            </View>
-          </View>
-        </View>
 
-        {/* Daily Attendance */}
-        <View style={styles.section}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>Daily Attendance</Text>
-            <DateChip text={monthLabel()} />
-          </View>
-          {loading ? (
-            <View style={styles.chartLoading}>
-              <ActivityIndicator color={Colors.primary} />
+            {/* Daily Attendance */}
+            <View style={styles.section}>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitle}>Daily Attendance</Text>
+                <DateChip text={monthLabel()} />
+              </View>
+              {firstLoad ? (
+                <View style={styles.chartLoading}>
+                  <ActivityIndicator color={Colors.primary} />
+                </View>
+              ) : (
+                <BarChart data={chartData} />
+              )}
             </View>
-          ) : (
-            <BarChart data={chartData} />
-          )}
-        </View>
+          </>
+        )}
 
         {/* Recent Activity */}
         <View style={styles.section}>
@@ -338,6 +372,28 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontSize: 12,
     color: Colors.textBlack,
+  },
+
+  // Load failure (replaces Overview + Daily Attendance when nothing loaded)
+  errorBox: {
+    backgroundColor: Colors.tapsBg,
+    borderRadius: Radii.button,
+    padding: Spacing.lg,
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  errorText: {
+    fontFamily: Fonts.medium,
+    fontWeight: '500',
+    fontSize: 14,
+    color: Colors.gray,
+    textAlign: 'center',
+  },
+  retryText: {
+    fontFamily: Fonts.bold,
+    fontWeight: '700',
+    fontSize: 14,
+    color: Colors.primary,
   },
 
   // Stat cards

@@ -52,6 +52,9 @@ export default function InviteParentReview() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  // Enrolled fine, but one or more photos did not upload — shown before the
+  // success modal so the admin knows to add them from Edit Child Info.
+  const [photoError, setPhotoError] = useState(null);
 
   const { name, email, relationship, children = [] } = parentDraft;
   const multi = children.length > 1;
@@ -87,16 +90,30 @@ export default function InviteParentReview() {
       const res = await inviteFamily(payload);
 
       // 2. Upload each child's image (response children are in the same order).
+      //
+      // A failure here is collected, not swallowed. The enrollment itself has
+      // already succeeded, so it must not be retried — but a silently dropped
+      // photo leaves the child with no photoUrl, and every child card in the
+      // app then falls back to the placeholder avatar with nothing to explain
+      // why.
+      const photoFailures = [];
       await Promise.all(
-        (res.children || []).map((rc, i) => {
-          const uri = children[i]?.image;
-          return uri ? uploadChildPhoto(rc.childId, uri).catch(() => {}) : null;
+        (res.children || []).map(async (rc, i) => {
+          const asset = children[i]?.image;
+          if (!asset?.uri) return;
+          try {
+            await uploadChildPhoto(rc.childId, asset);
+          } catch (e) {
+            const who = children[i]?.name || rc.fullName || 'Child';
+            photoFailures.push(`${who}: ${e.message || 'upload failed'}`);
+          }
         })
       );
 
       // The Enrollment list refetches from the API on focus, so the new parent
       // + children appear there without any local optimistic update.
-      setShowSuccess(true);
+      if (photoFailures.length) setPhotoError(photoFailures.join('\n'));
+      else setShowSuccess(true);
     } catch (e) {
       setError(e.message || 'Could not send the invitation. Please try again.');
     } finally {
@@ -154,7 +171,7 @@ export default function InviteParentReview() {
             <View style={styles.sectionHead}>
               <View style={styles.childTitleRow}>
                 {kid.image ? (
-                  <Image source={{ uri: kid.image }} style={styles.childAvatar} contentFit="cover" />
+                  <Image source={{ uri: kid.image.uri }} style={styles.childAvatar} contentFit="cover" />
                 ) : (
                   <View style={styles.childAvatarFallback}>
                     <Text style={styles.childInitials}>{initialsOf(kid.name)}</Text>
@@ -202,6 +219,19 @@ export default function InviteParentReview() {
         title="Invitation failed"
         message={error}
         buttonText="Try Again"
+      />
+
+      {/* The family is already enrolled — acknowledging this goes on to success,
+          it never re-runs the invite. */}
+      <ErrorModal
+        visible={!!photoError}
+        onClose={() => {
+          setPhotoError(null);
+          setShowSuccess(true);
+        }}
+        title="Photos not uploaded"
+        message={`The family was enrolled and the invitation was sent, but these photos could not be uploaded:\n\n${photoError}`}
+        buttonText="Continue"
       />
     </SafeAreaView>
   );

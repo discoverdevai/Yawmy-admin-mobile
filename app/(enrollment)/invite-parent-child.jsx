@@ -72,7 +72,12 @@ export default function InviteParentChild() {
       aspect: [1, 1],
       quality: 0.8,
     });
-    if (!result.canceled) patchKid(i, { image: result.assets[0].uri });
+    if (!result.canceled) {
+      // Keep the filename and mime type, not just the uri — the upload declares
+      // the file with them, and guessing "image/jpeg" mislabels PNG/HEIC picks.
+      const a = result.assets[0];
+      patchKid(i, { image: { uri: a.uri, fileName: a.fileName, mimeType: a.mimeType } });
+    }
   };
 
   const onSaveContact = (contact) => {
@@ -155,7 +160,7 @@ export default function InviteParentChild() {
                 <Text style={styles.label}>Child Image</Text>
                 <Pressable style={styles.uploadBox} onPress={() => pickImage(i)}>
                   {kid.image ? (
-                    <Image source={{ uri: kid.image }} style={styles.preview} contentFit="cover" />
+                    <Image source={{ uri: kid.image.uri }} style={styles.preview} contentFit="cover" />
                   ) : (
                     <View style={styles.uploadPrompt}>
                       <Upload width={24} height={24} />

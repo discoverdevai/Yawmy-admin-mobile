@@ -192,7 +192,10 @@ export default function AddAnnouncement() {
       copyToCacheDirectory: true,
     });
     if (result.canceled) return;
-    const picked = result.assets.map((a) => ({ key: a.uri, uri: a.uri, name: a.name, mimeType: a.mimeType }));
+    // `size` is carried so the type/size check can run before any upload.
+    const picked = result.assets.map((a) => ({
+      key: a.uri, uri: a.uri, name: a.name, mimeType: a.mimeType, size: a.size,
+    }));
     setMedia((cur) => [...cur, ...picked]);
   };
 
@@ -235,7 +238,7 @@ export default function AddAnnouncement() {
     keptMediaIds: media.filter((m) => m.existingId).map((m) => m.existingId),
     newMedia: media
       .filter((m) => !m.existingId)
-      .map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType })),
+      .map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType, size: m.size })),
   });
 
   const publish = async () => {
@@ -253,7 +256,9 @@ export default function AddAnnouncement() {
           links: linksOut,
           scope: scopeApi,
           roomId,
-          newMedia: media.map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType })),
+          newMedia: media.map((m) => ({
+            uri: m.uri, name: m.name, mimeType: m.mimeType, size: m.size,
+          })),
         });
       }
       setShowSuccess(true);

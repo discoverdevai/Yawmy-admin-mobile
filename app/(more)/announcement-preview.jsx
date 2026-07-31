@@ -106,7 +106,7 @@ export default function AnnouncementPreview() {
           keptMediaIds: media.filter((m) => m.existingId).map((m) => m.existingId),
           newMedia: media
             .filter((m) => !m.existingId)
-            .map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType })),
+            .map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType, size: m.size })),
         });
       } else {
         await submitAnnouncementCreate({
@@ -117,7 +117,9 @@ export default function AnnouncementPreview() {
           links,
           scope: scopeApi,
           roomId,
-          newMedia: media.map((m) => ({ uri: m.uri, name: m.name, mimeType: m.mimeType })),
+          newMedia: media.map((m) => ({
+            uri: m.uri, name: m.name, mimeType: m.mimeType, size: m.size,
+          })),
         });
       }
       setShowSuccess(true);

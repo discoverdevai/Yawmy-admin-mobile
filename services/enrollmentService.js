@@ -8,10 +8,23 @@ export function inviteFamily(payload) {
   return apiRequest('/admin/parent-invites', { method: 'POST', body: payload });
 }
 
-/** Upload a child's photo (multipart) from a local image uri. */
-export function uploadChildPhoto(childId, uri) {
+/**
+ * Upload a child's photo (multipart) from an ImagePicker asset.
+ *
+ * The picker's own filename and mime type are sent rather than a hardcoded
+ * "child.jpg"/"image/jpeg": the backend keys the stored extension off the
+ * declared content type, so a PNG or HEIC announced as JPEG is written under
+ * the wrong extension and served back with a type its bytes don't match.
+ * Accepts a bare uri too, for callers that only have one.
+ */
+export function uploadChildPhoto(childId, asset) {
+  const image = typeof asset === 'string' ? { uri: asset } : asset || {};
   const form = new FormData();
-  form.append('file', { uri, name: 'child.jpg', type: 'image/jpeg' });
+  form.append('file', {
+    uri: image.uri,
+    name: image.fileName || 'child.jpg',
+    type: image.mimeType || 'image/jpeg',
+  });
   return apiRequest(`/admin/children/${childId}/photo`, {
     method: 'POST',
     body: form,

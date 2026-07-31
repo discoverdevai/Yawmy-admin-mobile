@@ -13,6 +13,10 @@ export function DataProvider({ children }) {
   const { isAuthenticated } = useAuth();
   const [nursery, setNursery] = useState(null);
   const [loadingNursery, setLoadingNursery] = useState(false);
+  // The backend serves the logo from a stable path (/api/files/nursery/{id}/logo),
+  // so a re-upload doesn't change the URL and expo-image keeps serving the old
+  // cached image. Bumping this appends a fresh query param to break that cache.
+  const [logoVersion, setLogoVersion] = useState(0);
 
   const refreshNursery = useCallback(async () => {
     setLoadingNursery(true);
@@ -25,27 +29,40 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  // Call after a successful logo upload so every screen picks up the new image
+  // instead of the cached one.
+  const bumpLogoVersion = useCallback(() => setLogoVersion((v) => v + 1), []);
+
   // Load the nursery when the session becomes authenticated; clear on logout.
   useEffect(() => {
     if (isAuthenticated) {
       refreshNursery().catch(() => {});
     } else {
       setNursery(null);
+      setLogoVersion(0);
     }
   }, [isAuthenticated, refreshNursery]);
 
   const clearData = useCallback(() => {
     setNursery(null);
+    setLogoVersion(0);
   }, []);
+
+  const logoUrl = nursery?.logoUrl
+    ? logoVersion > 0
+      ? `${nursery.logoUrl}?v=${logoVersion}`
+      : nursery.logoUrl
+    : null;
 
   return (
     <DataContext.Provider
       value={{
         nursery,
         nurseryName: nursery?.name || '',
-        logoUrl: nursery?.logoUrl || null,
+        logoUrl,
         loadingNursery,
         refreshNursery,
+        bumpLogoVersion,
         clearData,
       }}
     >

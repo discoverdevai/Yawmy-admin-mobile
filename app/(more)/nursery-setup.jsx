@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSetup } from '../../context/SetupContext';
+import { useData } from '../../context/DataContext';
 import * as ImagePicker from 'expo-image-picker';
 import ArrowLeft from '../../assets/icons/arrow-left.svg';
 import EditIcon from '../../assets/icons/edit-dark.svg';
@@ -55,6 +56,7 @@ const fmtTime = (t) =>
 export default function NurserySetup() {
   const router = useRouter();
   const setup = useSetup();
+  const { refreshNursery, bumpLogoVersion } = useData();
   const pendingLocationEdit = useRef(false);
 
   const [loading, setLoading] = useState(true);
@@ -176,10 +178,17 @@ export default function NurserySetup() {
       }
       // Logo, if a new one was picked.
       if (logoAsset) {
-        await uploadLogo(logoAsset).catch(() => {});
+        const uploaded = await uploadLogo(logoAsset).then(() => true).catch(() => false);
         setLogoAsset(null);
+        // The logo path doesn't change on re-upload, so tell the app-wide store
+        // to bust its image cache — otherwise the home header and profile keep
+        // showing the previous logo.
+        if (uploaded) bumpLogoVersion();
       }
       await load();
+      // Keep the shared store (home header, profile) in step with what was
+      // just saved rather than waiting for the next sign-in.
+      await refreshNursery().catch(() => {});
       setShowSuccess(true);
     } catch (e) {
       setError(e.message || 'Could not save the changes.');

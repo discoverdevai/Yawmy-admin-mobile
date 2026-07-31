@@ -121,6 +121,9 @@ export default function Enrollment() {
   const [prefillName, setPrefillName] = useState('');
   const [staffRoles, setStaffRoles] = useState([]); // [{ value, label }]
   const [showInviteSent, setShowInviteSent] = useState(false);
+  // Invite sent, but the member's photo did not upload — reported separately so
+  // a failed image never reads as a failed invitation.
+  const [photoError, setPhotoError] = useState(null);
 
   const isChildren = tab === 'children';
 
@@ -452,7 +455,15 @@ export default function Enrollment() {
               staffRole,
             });
             if (member.avatar?.uri && res?.userId) {
-              await uploadStaffImage(res.userId, member.avatar.uri).catch(() => {});
+              // Pass the whole asset so the real filename/mime type go up.
+              // The invite has already been sent, so a failed photo must not
+              // fail the flow — but it is reported rather than dropped, or the
+              // teacher silently ends up with an initials avatar forever.
+              try {
+                await uploadStaffImage(res.userId, member.avatar);
+              } catch (e) {
+                setPhotoError(e.message || 'The photo could not be uploaded.');
+              }
             }
             await load();
           }
@@ -464,6 +475,14 @@ export default function Enrollment() {
         visible={showInviteSent}
         title="Invitation sent Successfully!"
         onClose={() => setShowInviteSent(false)}
+      />
+
+      <ErrorModal
+        visible={!!photoError}
+        onClose={() => setPhotoError(null)}
+        title="Photo not uploaded"
+        message={`The invitation was sent, but the photo could not be uploaded:\n\n${photoError}`}
+        buttonText="Continue"
       />
 
       {/* Children 3-dots menu */}

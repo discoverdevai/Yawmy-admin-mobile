@@ -94,7 +94,9 @@ export default function AddMemberModal({
       aspect: [1, 1],
       quality: 0.8,
     });
-    if (!result.canceled) setImage(result.assets[0].uri);
+    // Keep the whole asset — the upload needs its filename and mime type, not
+    // just the uri (see uploadStaffImage).
+    if (!result.canceled) setImage(result.assets[0]);
   };
 
   const validate = () => {
@@ -116,7 +118,9 @@ export default function AddMemberModal({
         name: name.trim(),
         email: email.trim(),
         role,
-        avatar: image ? { uri: image } : null,
+        avatar: image
+          ? { uri: image.uri, fileName: image.fileName, mimeType: image.mimeType }
+          : null,
         status: 'pending', // invited, awaiting sign-up
       });
       reset();
@@ -171,7 +175,7 @@ export default function AddMemberModal({
                 <Text style={styles.label}>Image</Text>
                 <Pressable style={styles.uploadBox} onPress={pickImage}>
                   {image ? (
-                    <Image source={{ uri: image }} style={styles.preview} contentFit="cover" />
+                    <Image source={{ uri: image.uri }} style={styles.preview} contentFit="cover" />
                   ) : (
                     <View style={styles.uploadPrompt}>
                       <Upload width={24} height={24} />

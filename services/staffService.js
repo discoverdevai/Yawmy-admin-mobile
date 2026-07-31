@@ -48,10 +48,19 @@ export function inviteTeacher({ email, fullName, staffRole }) {
   });
 }
 
-/** Upload a staff member's photo (multipart) from a local image uri. */
-export function uploadStaffImage(userId, uri) {
+/**
+ * Upload a staff member's photo (multipart) from an ImagePicker asset.
+ * Sends the picker's filename and mime type — see uploadChildPhoto for why a
+ * hardcoded "image/jpeg" is not safe. Accepts a bare uri too.
+ */
+export function uploadStaffImage(userId, asset) {
+  const image = typeof asset === 'string' ? { uri: asset } : asset || {};
   const form = new FormData();
-  form.append('file', { uri, name: 'staff.jpg', type: 'image/jpeg' });
+  form.append('file', {
+    uri: image.uri,
+    name: image.fileName || 'staff.jpg',
+    type: image.mimeType || 'image/jpeg',
+  });
   return apiRequest(`/admin/staff/${userId}/image`, {
     method: 'POST',
     body: form,
