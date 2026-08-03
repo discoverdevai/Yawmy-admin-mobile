@@ -34,3 +34,33 @@ export function dayLabel(date) {
   const base = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
   return d.getFullYear() === today.getFullYear() ? base : `${base}, ${d.getFullYear()}`;
 }
+
+const FULL_DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * The right-hand stamp on a chat list row: "10:30 AM" today, "Yesterday", the
+ * weekday within the last week, then the date. Chat lists are scanned rather
+ * than read, so recent rows show a time and older ones only need to be placeable.
+ */
+export function formatChatStamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = midnight(new Date());
+  const day = midnight(d);
+
+  if (sameDay(day, today)) {
+    let hour = d.getHours();
+    const minute = String(d.getMinutes()).padStart(2, '0');
+    const period = hour >= 12 ? 'PM' : 'AM';
+    hour = hour % 12 || 12;
+    return `${hour}:${minute} ${period}`;
+  }
+  if (sameDay(day, addDays(today, -1))) return 'Yesterday';
+
+  const daysAgo = Math.round((today - day) / 86400000);
+  if (daysAgo < 7) return FULL_DOW[d.getDay()];
+
+  const base = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === today.getFullYear() ? base : `${base}, ${d.getFullYear()}`;
+}

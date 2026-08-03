@@ -68,6 +68,37 @@ function refreshOnce() {
   return _refreshInFlight;
 }
 
+/**
+ * Force a token refresh and resolve to the new access token (null when the
+ * session is genuinely over). For callers that cannot use the retry built into
+ * apiRequest — currently the chat WebSocket, whose handshake is not a fetch.
+ */
+export function refreshAccessToken() {
+  return refreshOnce();
+}
+
+/**
+ * The raw access token, for the one caller that cannot send an Authorization
+ * header: the chat WebSocket. Its handshake is a plain GET built by the
+ * WebSocket API itself, so the backend reads the token from the query string
+ * instead (see WebSocketConfig.JwtHandshakeInterceptor).
+ */
+export function getAccessToken() {
+  return _getToken();
+}
+
+/**
+ * Auth headers for an <Image source={{ uri, headers }}>.
+ *
+ * Every /api/files/** path requires authentication, and the image loader does
+ * not go through apiRequest — without this a chat photo just 401s and renders
+ * as an empty box.
+ */
+export function fileHeaders() {
+  const token = _getToken();
+  return token ? { Authorization: `Bearer ${token}` } : undefined;
+}
+
 /** True for errors that mean "we never reached the server", as opposed to a real rejection. */
 export function isNetworkError(error) {
   return !!error && error.isNetworkError === true;
