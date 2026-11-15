@@ -336,6 +336,7 @@ export default function InviteParentChild() {
         value={dateFor !== null ? kids[dateFor]?.dob : ''}
         onClose={() => setDateFor(null)}
         onSelect={(d) => dateFor !== null && patchKid(dateFor, { dob: d })}
+        maxDate={new Date(Date.now() - 24 * 60 * 60 * 1000)}
       />
 
       <ErrorModal

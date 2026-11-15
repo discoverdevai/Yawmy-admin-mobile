@@ -420,6 +420,7 @@ export default function EditChild() {
         format="DD MMM YYYY"
         onClose={() => setShowDate(false)}
         onSelect={setDob}
+        maxDate={new Date(Date.now() - 24 * 60 * 60 * 1000)}
       />
 
       <ErrorModal

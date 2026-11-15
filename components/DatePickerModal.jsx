@@ -34,14 +34,21 @@ const parse = (s) => {
  * Centered month calendar (Figma 598-114724). Navigate months with the arrows;
  * tapping a day returns it as "DD/MM/YYYY". Background is dimmed.
  */
-export default function DatePickerModal({ visible, value, onClose, onSelect, format = 'DD/MM/YYYY' }) {
+export default function DatePickerModal({ visible, value, onClose, onSelect, format = 'DD/MM/YYYY', maxDate }) {
   const [view, setView] = useState({ year: 2016, month: 11 }); // {year, month 0-based}
+
+  const max = maxDate ? new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate()) : null;
+  const maxDay = max ? max.getTime() : null;
 
   useEffect(() => {
     if (!visible) return;
-    const base = parse(value) || new Date();
+    const base = parse(value) || (maxDay != null ? new Date(maxDay) : new Date());
     setView({ year: base.getFullYear(), month: base.getMonth() });
-  }, [visible, value]);
+  }, [visible, value, maxDay]);
+
+  const isDisabled = (d) => !!max && d > max;
+  const atMaxMonth = !!max && (view.year > max.getFullYear()
+    || (view.year === max.getFullYear() && view.month >= max.getMonth()));
 
   const selected = parse(value);
   const sameDay = (a, b) =>
@@ -90,7 +97,12 @@ export default function DatePickerModal({ visible, value, onClose, onSelect, for
               <Pressable style={styles.navBtn} onPress={() => shiftMonth(-1)} hitSlop={6}>
                 <ArrowLeft width={24} height={24} />
               </Pressable>
-              <Pressable style={styles.navBtn} onPress={() => shiftMonth(1)} hitSlop={6}>
+              <Pressable
+                style={[styles.navBtn, atMaxMonth && styles.navBtnDisabled]}
+                onPress={() => shiftMonth(1)}
+                disabled={atMaxMonth}
+                hitSlop={6}
+              >
                 <ArrowLeft width={24} height={24} style={styles.flip} />
               </Pressable>
             </View>
@@ -114,13 +126,15 @@ export default function DatePickerModal({ visible, value, onClose, onSelect, for
                   const idx = base + di;
                   const d = dateOf(cell, idx);
                   const isSel = sameDay(d, selected);
+                  const off = isDisabled(d);
                   return (
-                    <Pressable key={di} style={styles.dayCell} onPress={() => pick(cell, idx)}>
+                    <Pressable key={di} style={styles.dayCell} onPress={() => pick(cell, idx)} disabled={off}>
                       <View style={[styles.dayInner, isSel && styles.dayInnerSel]}>
                         <Text
                           style={[
                             styles.dayText,
                             cell.offset !== 0 && styles.dayMuted,
+                            off && styles.dayDisabled,
                             isSel && styles.daySelText,
                           ]}
                         >
@@ -166,6 +180,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  navBtnDisabled: { opacity: 0.4 },
   flip: { transform: [{ rotate: '180deg' }] },
 
   weekRow: { flexDirection: 'row', alignItems: 'center' },
@@ -188,5 +203,6 @@ const styles = StyleSheet.create({
   dayInnerSel: { backgroundColor: Colors.primaryBg },
   dayText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.textBlack },
   dayMuted: { color: '#6E6E6E' },
+  dayDisabled: { color: '#C8C8C8' },
   daySelText: { color: Colors.primaryText, fontWeight: '600' },
 });
