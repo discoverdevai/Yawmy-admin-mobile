@@ -33,7 +33,7 @@ import ErrorModal from '../../components/ErrorModal';
 import AuthImage from '../../components/AuthImage';
 import { getStaff, getStaffRoles, inviteTeacher, uploadStaffImage } from '../../services/staffService';
 import { getParents } from '../../services/parentService';
-import { getChildren, reassignChildRoom, unenrollChild } from '../../services/childrenService';
+import { getChildren, reassignChildRoom, unenrollChild, restoreChild } from '../../services/childrenService';
 import { getRooms } from '../../services/roomsService';
 import { Colors, Fonts, Spacing, Radii } from '../../constants/theme';
 
@@ -125,6 +125,9 @@ export default function Enrollment() {
   // a failed image never reads as a failed invitation.
   const [photoError, setPhotoError] = useState(null);
 
+  const [showUnenrolled, setShowUnenrolled] = useState(false);
+  const [restoredTitle, setRestoredTitle] = useState(null);
+
   const isChildren = tab === 'children';
 
   const load = useCallback(async () => {
@@ -133,7 +136,7 @@ export default function Enrollment() {
       const [s, p, c] = await Promise.all([
         getStaff().catch(() => []),
         getParents().catch(() => []),
-        getChildren().catch(() => []),
+        getChildren({ includeUnenrolled: true }).catch(() => []),
       ]);
       setStaff(
         (s || []).map((m) => ({
@@ -162,6 +165,7 @@ export default function Enrollment() {
           roomId: m.roomId,
           roomName: m.roomName || '',
           ageMonths: ageInMonths(m.dob),
+          unenrolled: m.enrollmentStatus === 'UNENROLLED',
         }))
       );
       setError(null);
@@ -203,9 +207,12 @@ export default function Enrollment() {
   const childFilter = filters.children || { rooms: [], ageMonths: null };
   const childRoomOptions = [...new Set(children.map((c) => c.roomName).filter(Boolean))];
 
+  const unenrolledCount = children.filter((c) => c.unenrolled).length;
+
   const q = query.trim().toLowerCase();
   const filtered = list.filter((m) => {
     if (isChildren) {
+      if (m.unenrolled && !showUnenrolled) return false;
       const matchesQuery =
         m.name.toLowerCase().includes(q) || String(m.childId).toLowerCase().includes(q);
       const matchesRoom = childFilter.rooms.length === 0 || childFilter.rooms.includes(m.roomName);
@@ -291,6 +298,20 @@ export default function Enrollment() {
     }
   };
 
+  const restoreChildAction = async (child) => {
+    try {
+      const restored = await restoreChild(child.id);
+      await load();
+      setRestoredTitle(
+        child.roomId && !restored?.roomId
+          ? `${child.name} restored. Their room is full or archived, so please assign a room.`
+          : `${child.name} restored successfully!`
+      );
+    } catch (e) {
+      setError(e.message || 'Could not restore the child.');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
@@ -343,6 +364,14 @@ export default function Enrollment() {
         </Pressable>
       </View>
 
+      {isChildren && unenrolledCount > 0 && (
+        <Pressable style={styles.unenrolledToggle} onPress={() => setShowUnenrolled((v) => !v)} hitSlop={6}>
+          <Text style={styles.unenrolledToggleText}>
+            {showUnenrolled ? 'Hide unenrolled' : `Show unenrolled (${unenrolledCount})`}
+          </Text>
+        </Pressable>
+      )}
+
       {/* Member list */}
       {loading ? (
         <ActivityIndicator style={{ marginTop: Spacing.xl }} color={Colors.primary} />
@@ -362,7 +391,7 @@ export default function Enrollment() {
           {isChildren &&
             filtered.map((m) => (
               <View key={m.id} style={styles.card}>
-                <View style={styles.cardLeft}>
+                <View style={[styles.cardLeft, m.unenrolled && styles.cardDimmed]}>
                   <AuthImage
                     path={m.photoUrl}
                     fallback={childAvatar}
@@ -371,16 +400,24 @@ export default function Enrollment() {
                   />
                   <View style={styles.cardText}>
                     <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
-                    <Text style={styles.childId}>ID: {m.childId}</Text>
+                    <Text style={styles.childId}>
+                      {m.unenrolled ? 'Unenrolled' : `ID: ${m.childId}`}
+                    </Text>
                   </View>
                 </View>
-                <Pressable
-                  style={styles.moreBtn}
-                  hitSlop={8}
-                  onPress={(e) => openChildMenu(m, e.nativeEvent.pageY)}
-                >
-                  <MoreVertical width={24} height={24} />
-                </Pressable>
+                {m.unenrolled ? (
+                  <Pressable style={styles.restoreBtn} hitSlop={8} onPress={() => restoreChildAction(m)}>
+                    <Text style={styles.restoreBtnText}>Restore</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={styles.moreBtn}
+                    hitSlop={8}
+                    onPress={(e) => openChildMenu(m, e.nativeEvent.pageY)}
+                  >
+                    <MoreVertical width={24} height={24} />
+                  </Pressable>
+                )}
               </View>
             ))}
 
@@ -518,9 +555,16 @@ export default function Enrollment() {
       <DeleteChildModal
         visible={!!deleteChild}
         title="Delete Child?"
-        message="Are you sure you want to delete this child? This action cannot be undone and all related records will be removed."
+        message="Are you sure you want to delete this child? Their parents lose access right away. You can restore the child from the Children list; their photos and videos are deleted after 30 days."
         onCancel={() => setDeleteChild(null)}
         onConfirm={confirmDeleteChild}
+      />
+
+      <RoomArchivedModal
+        visible={!!restoredTitle}
+        title={restoredTitle || ''}
+        duration={3000}
+        onClose={() => setRestoredTitle(null)}
       />
 
       <ErrorModal
@@ -647,6 +691,18 @@ const styles = StyleSheet.create({
   role: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 12, color: Colors.gray },
   childId: { fontFamily: Fonts.regular, fontSize: 12, color: Colors.gray },
   moreBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  cardDimmed: { opacity: 0.5 },
+  restoreBtn: {
+    paddingHorizontal: Spacing.md,
+    height: 36,
+    borderRadius: Radii.button,
+    backgroundColor: Colors.primaryBgLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  restoreBtnText: { fontFamily: Fonts.bold, fontWeight: '600', fontSize: 14, color: Colors.primary },
+  unenrolledToggle: { alignSelf: 'flex-end', paddingHorizontal: Spacing.md, marginBottom: Spacing.sm },
+  unenrolledToggleText: { fontFamily: Fonts.medium, fontWeight: '500', fontSize: 14, color: Colors.primary },
 
   menu: {
     position: 'absolute',

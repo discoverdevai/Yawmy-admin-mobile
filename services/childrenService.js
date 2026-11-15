@@ -41,6 +41,10 @@ export function unenrollChild(childId) {
   return apiRequest(`/admin/children/${childId}/unenroll`, { method: 'POST' });
 }
 
+export function restoreChild(childId) {
+  return apiRequest(`/admin/children/${childId}/restore`, { method: 'POST' });
+}
+
 // ── Emergency contacts (guardians) ──────────────────────────────────────────
 // Each contact: { id, fullName, relationship, phone }.
 export function getEmergencyContacts(childId) {
