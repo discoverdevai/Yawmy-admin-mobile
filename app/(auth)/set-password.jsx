@@ -120,6 +120,11 @@ export default function SetPassword() {
                 value={password}
                 onChangeText={setPassword}
               />
+              <Text
+                style={[styles.hint, password.length > 0 && password.length < MIN_LENGTH && styles.error]}
+              >
+                Password must be at least {MIN_LENGTH} characters.
+              </Text>
               <PasswordInput
                 label="Confirm Password"
                 value={confirm}
@@ -212,6 +217,11 @@ const styles = StyleSheet.create({
   },
   inputs: {
     gap: Spacing.lg, // 24 between the two fields
+  },
+  hint: {
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    color: Colors.gray,
   },
   error: {
     fontFamily: Fonts.regular,
