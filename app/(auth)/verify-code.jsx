@@ -23,7 +23,9 @@ const illustration = require('../../assets/images/otp.png');
 export default function VerifyCode() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const otpSeconds = Number(params.expiresInSeconds) || 30;
+  // Wait before "Resend code" unlocks. Not the backend's expiresInSeconds,
+  // which is how long the code stays valid (5 minutes).
+  const otpSeconds = 30;
   const [token, setToken] = useState(params.token);
   const [digits, setDigits] = useState(['', '', '', '']);
   const [error, setError] = useState(false);
@@ -73,7 +75,7 @@ export default function VerifyCode() {
       // POST /auth/resend-reset-otp → new OTP emailed, fresh countdown.
       const res = await resendResetOtp(token);
       if (res?.token) setToken(res.token);
-      setSeconds(Number(res?.expiresInSeconds) || otpSeconds);
+      setSeconds(otpSeconds);
     } catch (_) {
       setSeconds(otpSeconds);
     }
@@ -110,7 +112,7 @@ export default function VerifyCode() {
     else router.replace('/forgot-password');
   };
 
-  const timer = `00:${String(seconds).padStart(2, '0')}`;
+  const timer = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
